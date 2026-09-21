@@ -1,0 +1,902 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JNFAM 재고 현황 시스템</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root{
+  --bg:#f4f6fa; --card:#fff; --line:#e3e8f0; --txt:#1e2532; --sub:#6b7688;
+  --blue:#2563eb; --blue-l:#eff4ff; --green:#059669; --green-l:#ecfdf5;
+  --amber:#d97706; --amber-l:#fffbeb; --red:#dc2626; --red-l:#fef2f2;
+  --purple:#7c3aed; --purple-l:#f5f3ff; --slate-l:#f1f5f9;
+}
+*{margin:0;padding:0;box-sizing:border-box;font-family:'Segoe UI','Malgun Gothic',sans-serif}
+body{background:var(--bg);color:var(--txt);font-size:14px}
+.layout{display:flex;min-height:100vh}
+.sidebar{width:220px;background:#101827;color:#cbd5e1;padding:20px 0;flex-shrink:0;position:sticky;top:0;height:100vh;overflow-y:auto}
+.sidebar .logo{padding:0 20px 18px;border-bottom:1px solid #2a3548;margin-bottom:12px}
+.sidebar .logo b{color:#fff;font-size:17px;display:block}
+.sidebar .logo span{font-size:11px;color:#7d8aa0}
+.nav-item{display:flex;align-items:center;gap:10px;padding:11px 20px;cursor:pointer;font-size:14px;border-left:3px solid transparent}
+.nav-item:hover{background:#1a2438;color:#fff}
+.nav-item.active{background:#1e2a44;color:#fff;border-left-color:var(--blue)}
+.nav-item .badge{margin-left:auto;background:var(--amber);color:#fff;font-size:11px;border-radius:10px;padding:1px 7px}
+.nav-link{display:block;padding:9px 20px;font-size:12.5px;color:#93c5fd;text-decoration:none}
+.nav-link:hover{background:#1a2438}
+.conn{margin:14px 20px 0;padding:8px 10px;border-radius:8px;font-size:12px;background:#1a2438;line-height:1.5}
+.conn .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
+.conn a{color:#93c5fd;text-decoration:none;font-size:11px}
+.login-gate{position:fixed;inset:0;z-index:9999;background:#101827;display:flex;align-items:center;justify-content:center;padding:20px}
+.login-card{background:var(--card);border-radius:14px;padding:36px 34px;width:100%;max-width:400px;text-align:center;box-shadow:0 20px 50px rgba(0,0,0,.35)}
+.login-card .lg-logo{font-size:22px;font-weight:700}
+.login-card .lg-sub{font-size:12px;color:var(--sub);margin-top:4px}
+.login-card .lg-desc{font-size:13px;color:var(--sub);margin:22px 0 20px;line-height:1.6}
+.login-card .lg-btn{width:100%;justify-content:center;padding:11px 16px;font-size:14px}
+.login-card .lg-msg{margin-top:16px;font-size:13px;color:var(--red);line-height:1.6;white-space:pre-line;display:none}
+.login-card .lg-msg.on{display:block}
+.main{flex:1;padding:24px 28px;max-width:1600px;min-width:0}
+h2.page-title{font-size:20px;margin-bottom:4px}
+.page-sub{color:var(--sub);font-size:13px;margin-bottom:16px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;margin-bottom:20px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+.kpi .k-label{font-size:12px;color:var(--sub);margin-bottom:6px}
+.kpi .k-value{font-size:23px;font-weight:800;letter-spacing:-.5px;font-variant-numeric:tabular-nums}
+.kpi .k-sub{font-size:12px;color:var(--sub);margin-top:4px}
+.kpi.b-blue{border-top:3px solid var(--blue)} .kpi.b-amber{border-top:3px solid var(--amber)}
+.kpi.b-green{border-top:3px solid var(--green)} .kpi.b-purple{border-top:3px solid var(--purple)}
+.kpi.b-red{border-top:3px solid var(--red)}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:20px;min-width:0}
+.panel h3{font-size:15px;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.panel h3 .spacer{flex:1}
+.grid2{display:grid;grid-template-columns:1.3fr 1fr;gap:20px}
+.grid2e{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+@media(max-width:1100px){.grid2,.grid2e{grid-template-columns:1fr}}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{background:#f8fafc;color:var(--sub);font-weight:600;text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);white-space:nowrap;position:sticky;top:0}
+td{padding:8px 10px;border-bottom:1px solid #f0f2f6;white-space:nowrap}
+tr.dim td{color:#9aa4b5}
+tr.clickable{cursor:pointer} tr.clickable:hover td{background:#f8fafc}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+td.wrap{white-space:normal;min-width:160px;max-width:320px;font-size:12px;color:var(--sub)}
+.tag{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11.5px;font-weight:600}
+.tag.ok{background:var(--green-l);color:var(--green)}
+.tag.warn{background:var(--red-l);color:var(--red)}
+.tag.amber{background:var(--amber-l);color:var(--amber)}
+.tag.gray{background:var(--slate-l);color:#64748b}
+.tag.purple{background:var(--purple-l);color:var(--purple)}
+.tag.blue{background:var(--blue-l);color:var(--blue)}
+.btn{display:inline-flex;align-items:center;gap:6px;border:none;border-radius:8px;padding:8px 14px;font-size:13px;cursor:pointer;font-weight:600;white-space:nowrap}
+.btn.primary{background:var(--blue);color:#fff} .btn.primary:hover{background:#1d4ed8}
+.btn.green{background:var(--green);color:#fff}
+.btn.amber{background:var(--amber);color:#fff}
+.btn.ghost{background:#fff;border:1px solid var(--line);color:var(--txt)}
+.btn.sm{padding:4px 10px;font-size:12px;border-radius:6px}
+.btn.danger{background:var(--red-l);color:var(--red)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.toolbar{display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
+.toolbar .spacer{flex:1}
+select,input[type=text],input[type=number],input[type=date],textarea{
+  border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:13px;background:#fff;color:var(--txt);width:100%}
+select:focus,input:focus,textarea:focus{outline:2px solid #bfd3ff;border-color:var(--blue)}
+.w-auto{width:auto!important}
+.ptabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+.ptab{padding:8px 14px;border-radius:8px;background:#fff;border:1px solid var(--line);cursor:pointer;font-size:13px;font-weight:600}
+.ptab.on{background:var(--blue);color:#fff;border-color:var(--blue)}
+.ptab small{font-weight:400;opacity:.8;margin-left:4px}
+.modal-bg{position:fixed;inset:0;background:rgba(15,23,42,.5);display:none;align-items:flex-start;justify-content:center;z-index:50;overflow-y:auto;padding:40px 16px}
+.modal-bg.open{display:flex}
+.modal{background:#fff;border-radius:14px;width:760px;max-width:100%;padding:22px}
+.modal.wide{width:980px}
+.modal h3{font-size:16px;margin-bottom:16px}
+.form-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.form-grid .full{grid-column:1/-1} .form-grid .span2{grid-column:span 2}
+@media(max-width:700px){.form-grid{grid-template-columns:1fr}.form-grid .span2{grid-column:auto}}
+.fld label{display:block;font-size:12px;color:var(--sub);margin-bottom:4px;font-weight:600}
+.fld .chk{display:flex;align-items:center;gap:8px;font-size:13px;padding-top:6px}
+.fld .chk input{width:auto}
+.calc-box{background:#f8fafc;border-radius:8px;padding:10px 12px;font-size:13px;display:flex;gap:18px;flex-wrap:wrap;align-items:center}
+.calc-box b{font-variant-numeric:tabular-nums}
+.calc-box .bad{color:var(--red)} .calc-box .good{color:var(--green)}
+.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px;align-items:center}
+.modal-actions .left{margin-right:auto}
+.pcards{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px;margin-bottom:20px}
+.pcard{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;cursor:pointer;transition:box-shadow .15s}
+.pcard:hover{box-shadow:0 4px 14px rgba(15,23,42,.08)}
+.pcard.low{border-color:#fca5a5;background:#fffafa}
+.pcard .pc-top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
+.pcard .pc-name{font-weight:800;font-size:15px}
+.pcard .pc-code{font-size:11px;color:var(--sub)}
+.pcard .pc-label{font-size:12px;color:var(--blue);font-weight:700;margin-top:2px}
+.pcard .pc-total{font-size:28px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-.5px;color:var(--txt)}
+.pcard .pc-sep{border-top:1px dashed var(--line);margin-top:6px;padding-top:6px}
+.pcard .pc-grand{color:var(--sub)} .pcard .pc-grand .v{color:var(--sub);font-weight:600}
+.pcard .pc-total small{font-size:12px;color:var(--sub);font-weight:600;margin-left:3px}
+.pcard .bar{display:flex;height:8px;border-radius:5px;overflow:hidden;background:#eef1f6;margin:10px 0 8px}
+.pcard .bar span{display:block;height:100%}
+.pcard .row{display:flex;justify-content:space-between;font-size:12.5px;padding:2px 0}
+.pcard .row .v{font-weight:600;font-variant-numeric:tabular-nums}
+.pcard .row .dotc{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:6px}
+.chart-wrap{height:300px;position:relative}
+.empty{color:var(--sub);text-align:center;padding:26px;font-size:13px}
+.banner{background:var(--amber-l);border:1px solid #fcd34d;border-radius:10px;padding:12px 16px;margin-bottom:16px;font-size:13px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.banner.red{background:var(--red-l);border-color:#fca5a5}
+.banner.blue{background:var(--blue-l);border-color:#bfd3ff}
+.tbl-scroll{overflow-x:auto}
+.tbl-scroll.tall{max-height:560px;overflow-y:auto}
+.toast{position:fixed;bottom:24px;right:24px;background:#101827;color:#fff;padding:12px 18px;border-radius:10px;font-size:13px;z-index:100;display:none;max-width:420px}
+.help{font-size:12px;color:var(--sub);line-height:1.7}
+.help code{background:#f1f5f9;padding:1px 5px;border-radius:4px;font-size:11.5px}
+.mono{font-family:Consolas,monospace;font-size:12px}
+.d-late{color:var(--red);font-weight:700} .d-soon{color:var(--amber);font-weight:700} .d-ok{color:var(--green);font-weight:600}
+.split-tbl td{padding:4px 6px} .split-tbl input{padding:6px 8px}
+.legend-inline{display:flex;gap:14px;font-size:12px;color:var(--sub);flex-wrap:wrap}
+.legend-inline i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.mobile-top{display:none}
+@media(max-width:860px){
+  .sidebar{position:fixed;left:-240px;z-index:60;transition:left .2s}
+  .sidebar.open{left:0}
+  .mobile-top{display:flex;align-items:center;gap:10px;padding:12px 16px;background:#101827;color:#fff;position:sticky;top:0;z-index:40}
+  .main{padding:16px}
+  .layout{flex-direction:column}
+}
+</style>
+</head>
+<body>
+<div class="mobile-top"><button class="btn ghost sm" onclick="document.querySelector('.sidebar').classList.toggle('open')">☰</button><b>JNFAM 재고 현황</b></div>
+<div class="layout">
+  <nav class="sidebar">
+    <div class="logo"><b>JNFAM 재고 현황</b><span>Inventory Status System</span></div>
+    <div class="nav-item active" data-view="dashboard">📊 대시보드</div>
+    <div class="nav-item" data-view="stock">📦 품목별 재고(Lot)</div>
+    <div class="nav-item" data-view="usage">📤 출고·사용 기록</div>
+    <div class="nav-item" data-view="iso">🛢️ ISO 탱크</div>
+    <div class="nav-item" data-view="incoming">🚢 입고 예정 <span class="badge" id="incBadge" style="display:none"></span></div>
+    <div class="nav-item" data-view="settings">⚙️ 설정</div>
+    <a class="nav-link" href="https://yt9495.github.io/jnfam-ledger/" target="_blank">↗ JNFAM 수불부 열기</a>
+    <div class="conn" id="connStatus"><span class="dot" style="background:#94a3b8"></span>연결 준비 중…</div>
+  </nav>
+  <main class="main" id="main"></main>
+</div>
+<div class="login-gate" id="loginGate" style="display:none">
+  <div class="login-card">
+    <div class="lg-logo">JNFAM 재고 현황</div>
+    <div class="lg-sub">Inventory Status System</div>
+    <div class="lg-desc">허용된 Google 계정으로 로그인해야<br>재고 데이터를 볼 수 있습니다.<br><span style="font-size:12px">(수불부와 같은 계정을 사용합니다)</span></div>
+    <button class="btn primary lg-btn" onclick="app.googleLogin()">Google 계정으로 로그인</button>
+    <div class="lg-msg" id="loginMsg"></div>
+    <button class="btn ghost lg-btn" id="loginAlt" style="margin-top:10px;display:none" onclick="app.logout()">다른 계정으로 로그인</button>
+  </div>
+</div>
+<div class="modal-bg" id="modalBg"><div class="modal" id="modalBox"></div></div>
+<div class="toast" id="toast"></div>
+
+<script>
+const SEED = {"products":[{"key":"HF","name":"HF 49%","code":"1790","ledgerItem":"HF","ledgerPurity":0.49,"ibcKg":1150,"isoKg":18400,"minStock":0,"order":0,"lotPrefix":"JAHF"},{"key":"HNO3_65","name":"HNO3 65%","code":"2031","ledgerItem":"HNO3","ledgerPurity":0.65,"ibcKg":1240,"isoKg":18600,"minStock":0,"order":1,"lotPrefix":"JAHN"},{"key":"HCL","name":"HCl 35%","code":"1789","ledgerItem":"HCl","ledgerPurity":0.35,"ibcKg":1100,"isoKg":18480,"minStock":0,"order":2,"lotPrefix":"JAHC"},{"key":"HNO3_68","name":"HNO3 68%","code":"2032","ledgerItem":"HNO3","ledgerPurity":0.68,"ibcKg":1240,"isoKg":18600,"minStock":0,"order":3,"lotPrefix":"JAHN"},{"key":"H2SO4","name":"H2SO4 96%","code":"","ledgerItem":"H2SO4","ledgerPurity":0.96,"ibcKg":1600,"isoKg":18400,"minStock":0,"order":4,"lotPrefix":"JAHS"},{"key":"H2O2","name":"H2O2 31%","code":"","ledgerItem":"H2O2","ledgerPurity":0.31,"ibcKg":1150,"isoKg":18400,"minStock":0,"order":5,"lotPrefix":"JAHP"}],"lots":[{"id":"L00001","product":"HF","receivedDate":"2024-10-02","receivedDateEstimated":false,"sourceLot":"JNFU2400021","container":"ISO","unitKg":1150,"qtyIn":18450.0,"location":"창고","mfgDate":"","shelfLife":"2026-05-01","coa":true,"hold":false,"note":"출하 완료","memo":"","jnfamLots":"JAHF-250813A","invoice":"","createdBy":"excel-import"},{"id":"L00003","product":"HF","receivedDate":"2024-10-02","receivedDateEstimated":false,"sourceLot":"JNFU2400037","container":"ISO","unitKg":1150,"qtyIn":18510.0,"location":"창고","mfgDate":"","shelfLife":"2025-10-01","coa":true,"hold":false,"note":"출하 완료","memo":"","jnfamLots":"JAHF-250903A","invoice":"","createdBy":"excel-import"},{"id":"L00005","product":"HF","receivedDate":"2025-05-06","receivedDateEstimated":false,"sourceLot":"TA02351222","container":"IBC","unitKg":1150,"qtyIn":16100.0,"location":"창고","mfgDate":"2025-01-22","shelfLife":"2026-05-05","coa":true,"hold":false,"note":"출하 완료","memo":"","jnfamLots":"JAHF-250908A","invoice":"","createdBy":"excel-import"},{"id":"L00007","product":"HF","receivedDate":"2025-05-06","receivedDateEstimated":false,"sourceLot":"TA02351231","container":"IBC","unitKg":1150,"qtyIn":4600.0,"location":"창고","mfgDate":"2025-01-23","shelfLife":"2026-05-05","coa":true,"hold":false,"note":"출하 완료","memo":"","jnfamLots":"JAHF-250908A / JAHF-250915A","invoice":"","createdBy":"excel-import"},{"id":"L00009","product":"HF","receivedDate":"2025-05-06","receivedDateEstimated":true,"sourceLot":"TA02351221","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"","coa":true,"hold":false,"note":"출하 완료","memo":"","jnfamLots":"JAHF-250915A / JAHF-250919A","invoice":"","createdBy":"excel-import"},{"id":"L00011","product":"HF","receivedDate":"2025-08-06","receivedDateEstimated":false,"sourceLot":"TA02356052","container":"IBC","unitKg":1150,"qtyIn":17250.0,"location":"창고","mfgDate":"","shelfLife":"2026-08-05","coa":true,"hold":false,"note":"출하 완료","memo":"5/13 3 iso","jnfamLots":"JAHF-250919A / JAHF-260513A","invoice":"","createdBy":"excel-import"},{"id":"L00013","product":"HF","receivedDate":"2025-08-06","receivedDateEstimated":true,"sourceLot":"TA02356053","container":"IBC","unitKg":1150,"qtyIn":17250.0,"location":"창고","mfgDate":"","shelfLife":"","coa":true,"hold":false,"note":"출하 완료","memo":"5/13 13 iso | 5/18 2 iso","jnfamLots":"JAHF-260513A / JAHF-260518A","invoice":"","createdBy":"excel-import"},{"id":"L00016","product":"HF","receivedDate":"2025-08-06","receivedDateEstimated":true,"sourceLot":"TA02356061","container":"IBC","unitKg":1150,"qtyIn":6900.0,"location":"창고","mfgDate":"","shelfLife":"","coa":true,"hold":false,"note":"출하 완료","memo":"5/18 6 iso","jnfamLots":"JAHF-260518A","invoice":"","createdBy":"excel-import"},{"id":"L00018","product":"HF","receivedDate":"2025-11-03","receivedDateEstimated":false,"sourceLot":"FT2592101","container":"IBC","unitKg":1095,"qtyIn":19710.0,"location":"창고","mfgDate":"","shelfLife":"2026-11-02","coa":true,"hold":false,"note":"출하 완료","memo":"3+2+1+2+2+5+3 | 2/10 3EA | 2/13 2EA | 2/15 1EA | 2/17 2EA | 2/20 2EA | 2/24 5EA | 2/27 3EA","jnfamLots":"Qcells IBC","invoice":"","createdBy":"excel-import"},{"id":"L00026","product":"HF","receivedDate":"2025-11-03","receivedDateEstimated":true,"sourceLot":"FT2592102","container":"IBC","unitKg":1095,"qtyIn":19710.0,"location":"창고","mfgDate":"","shelfLife":"","coa":true,"hold":false,"note":"출하 완료","memo":"Qcells 4+6+6EA | 27600 | 1/30 4EA | 2/3 6EA | 2/5 6EA | 노랑 2EA | 5/18 2EA","jnfamLots":"Qcells IBC","invoice":"","createdBy":"excel-import"},{"id":"L00031","product":"HF","receivedDate":"2025-11-12","receivedDateEstimated":false,"sourceLot":"FT2592105","container":"IBC","unitKg":1100,"qtyIn":19800.0,"location":"창고","mfgDate":"","shelfLife":"2026-11-11","coa":true,"hold":false,"note":"출하 완료","memo":"Qcells 3+1 | 92000 | 2/13 3EA | 2/27 1EA | 5/28 7 iso | 6/1 7 iso","jnfamLots":"JAHF-260528B / JAHF-260601A","invoice":"","createdBy":"excel-import"},{"id":"L00036","product":"HF","receivedDate":"2025-11-13","receivedDateEstimated":false,"sourceLot":"FT2592104","container":"IBC","unitKg":1100,"qtyIn":19800.0,"location":"창고","mfgDate":"","shelfLife":"2026-11-12","coa":true,"hold":false,"note":"출하 완료","memo":"5/19 16 iso","jnfamLots":"JAHF-260519A","invoice":"","createdBy":"excel-import"},{"id":"L00038","product":"HF","receivedDate":"2025-12-04","receivedDateEstimated":false,"sourceLot":"FT2592103","container":"IBC","unitKg":1095,"qtyIn":19710.0,"location":"창고","mfgDate":"","shelfLife":"2026-12-03","coa":true,"hold":false,"note":"출하 완료","memo":"Q 3+4+2-4+2+1 | 104347.82608695653 | 2/27 3EA | 비닐 1EA | 3/24 4EA | 3/26 2EA | 3/31 4 반납 | 5/18 2EA iso | 5/19 1 iso | 5/28 10 iso","jnfamLots":"IBC / JAHF-260519A / JAHF-260528B","invoice":"","createdBy":"excel-import"},{"id":"L00046","product":"HF","receivedDate":"2026-02-27","receivedDateEstimated":false,"sourceLot":"FT2612102","container":"IBC","unitKg":1090,"qtyIn":19620.0,"location":"창고","mfgDate":"","shelfLife":"2027-02-26","coa":true,"hold":false,"note":"출하 완료","memo":"Qcells 6+10-1+3 | 3/3 6EA | 3/5 10EA | 노랑 2EA | 3/31 1 반납 | 5/18 3 iso","jnfamLots":"Qcells IBC","invoice":"","createdBy":"excel-import"},{"id":"L00051","product":"HF","receivedDate":"2026-03-02","receivedDateEstimated":false,"sourceLot":"FT2612101","container":"IBC","unitKg":1090,"qtyIn":19620.0,"location":"창고","mfgDate":"","shelfLife":"2027-03-01","coa":true,"hold":false,"note":"출하 완료","memo":"Qcells 5+7+6 | 3/6 5EA | 3/13 7EA | 3/17 6EA","jnfamLots":"Qcells IBC","invoice":"","createdBy":"excel-import"},{"id":"L00055","product":"HF","receivedDate":"2026-03-18","receivedDateEstimated":false,"sourceLot":"FT2612104","container":"IBC","unitKg":1100,"qtyIn":19800.0,"location":"창고","mfgDate":"","shelfLife":"2027-03-17","coa":true,"hold":false,"note":"출하 완료","memo":"6/1 10 iso | 6/2 8 iso","jnfamLots":"JAHF-260601A / JAHF-260602A","invoice":"","createdBy":"excel-import"},{"id":"L00058","product":"HF","receivedDate":"2026-03-20","receivedDateEstimated":false,"sourceLot":"FT2612103","container":"IBC","unitKg":1100,"qtyIn":19800.0,"location":"창고","mfgDate":"","shelfLife":"2027-03-19","coa":true,"hold":false,"note":"출하 완료","memo":"6/2 9 iso | 6/3 9","jnfamLots":"JAHF-260602A / JAHF-260604A","invoice":"","createdBy":"excel-import"},{"id":"L00061","product":"HF","receivedDate":"2026-04-07","receivedDateEstimated":false,"sourceLot":"FT2622101","container":"IBC","unitKg":1100,"qtyIn":19800.0,"location":"창고","mfgDate":"","shelfLife":"2027-04-06","coa":true,"hold":false,"note":"출하 완료","memo":"6/3 8 | 6/9 10","jnfamLots":"JAHF-260604A / JAHF-260609A","invoice":"","createdBy":"excel-import"},{"id":"L00064","product":"HF","receivedDate":"2026-04-07","receivedDateEstimated":false,"sourceLot":"FT2622102","container":"IBC","unitKg":1100,"qtyIn":19800.0,"location":"창고","mfgDate":"","shelfLife":"2027-04-06","coa":true,"hold":false,"note":"출하 완료","memo":"6/9 7 | 6/16 11","jnfamLots":"JAHF-260609A / JAHF-260616A","invoice":"","createdBy":"excel-import"},{"id":"L00067","product":"HF","receivedDate":"2026-04-15","receivedDateEstimated":false,"sourceLot":"FT2632301","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-04-14","coa":true,"hold":false,"note":"출하 완료","memo":"6/16 6 | 6/23 12","jnfamLots":"JAHF-260616A / JAHF-260623A","invoice":"","createdBy":"excel-import"},{"id":"L00070","product":"HF","receivedDate":"2026-04-16","receivedDateEstimated":false,"sourceLot":"FT2622305","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-04-15","coa":true,"hold":false,"note":"출하 완료","memo":"6/23 4 | 6/30 14","jnfamLots":"JAHF-260623A / JAHF-260630A","invoice":"","createdBy":"excel-import"},{"id":"L00073","product":"HF","receivedDate":"2026-04-17","receivedDateEstimated":false,"sourceLot":"FT2622304","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-04-16","coa":true,"hold":false,"note":"출하 완료","memo":"6/30 2 | 7/2 16","jnfamLots":"JAHF-260630A / JAHF-260702A","invoice":"","createdBy":"excel-import"},{"id":"L00076","product":"HF","receivedDate":"2026-05-04","receivedDateEstimated":false,"sourceLot":"FT2632302","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-05-03","coa":true,"hold":false,"note":"출하 완료","memo":"6/29 10 pvjc | 7/7 8","jnfamLots":"PVJC /  JAHF-260707A","invoice":"","createdBy":"excel-import"},{"id":"L00079","product":"HF","receivedDate":"2026-05-04","receivedDateEstimated":false,"sourceLot":"FT2632303","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-05-03","coa":true,"hold":false,"note":"출하 완료","memo":"7/7 8 | 7/13 10","jnfamLots":"JAHF-260707A / JAHF-260714A","invoice":"","createdBy":"excel-import"},{"id":"L00082","product":"HF","receivedDate":"2026-05-04","receivedDateEstimated":false,"sourceLot":"FT2632304","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-05-03","coa":true,"hold":false,"note":"출하 완료","memo":"7/13 6 | 7/16 12","jnfamLots":"JAHF-260714A / JAHF-260716A","invoice":"","createdBy":"excel-import"},{"id":"L00085","product":"HF","receivedDate":"2026-05-18","receivedDateEstimated":false,"sourceLot":"FT2632305","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-05-17","coa":true,"hold":false,"note":"출하 완료","memo":"7/21 14 | 7/16 4","jnfamLots":"JAHF-260716A / JAHF-260721A","invoice":"","createdBy":"excel-import"},{"id":"L00088","product":"HF","receivedDate":"2026-05-18","receivedDateEstimated":false,"sourceLot":"FT2632306","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-05-17","coa":true,"hold":false,"note":"출하 완료","memo":"7/21 2 | 7/23 16","jnfamLots":"JAHF-260721A / JAHF-260723A","invoice":"","createdBy":"excel-import"},{"id":"L00091","product":"HF","receivedDate":"2026-05-22","receivedDateEstimated":false,"sourceLot":"FT2642202","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-05-21","coa":true,"hold":false,"note":"","memo":"7/28 16 | 7/29 2","jnfamLots":"JAHF-260728A / JAHF-260729A","invoice":"","createdBy":"excel-import"},{"id":"L00094","product":"HF","receivedDate":"2026-05-22","receivedDateEstimated":false,"sourceLot":"FT2642301","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-05-21","coa":true,"hold":false,"note":"","memo":"6/8 16 ESF | 7/29 2","jnfamLots":"ESF IBC / JAHF-260729A","invoice":"","createdBy":"excel-import"},{"id":"L00097","product":"HF","receivedDate":"2026-05-27","receivedDateEstimated":false,"sourceLot":"FT2642303","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-05-26","coa":true,"hold":false,"note":"","memo":"7/30 6 | 7/29 12","jnfamLots":"JAHF-260729A / JAHF-260730A","invoice":"","createdBy":"excel-import"},{"id":"L00100","product":"HF","receivedDate":"2026-05-27","receivedDateEstimated":false,"sourceLot":"FT2642304","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-05-26","coa":true,"hold":false,"note":"","memo":"7/30 10 | 8/3 8","jnfamLots":"JAHF-260730A / JAHF-260803A","invoice":"","createdBy":"excel-import"},{"id":"L00103","product":"HF","receivedDate":"2026-06-03","receivedDateEstimated":false,"sourceLot":"FT2642305","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-06-02","coa":true,"hold":false,"note":"7/29 ESF 16","memo":"7/29 ESF 16 | 8/3 2","jnfamLots":"ESF IBC / JAHF-260803A","invoice":"","createdBy":"excel-import"},{"id":"L00106","product":"HF","receivedDate":"2026-06-03","receivedDateEstimated":false,"sourceLot":"FT2642306","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-06-02","coa":true,"hold":false,"note":"8/2 ESF 16","memo":"8/2 ESF 16 | 8/3 2","jnfamLots":"ESF IBC / JAHF-260803A","invoice":"","createdBy":"excel-import"},{"id":"L00109","product":"HF","receivedDate":"2026-06-05","receivedDateEstimated":false,"sourceLot":"FT2642307","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-06-04","coa":true,"hold":false,"note":"8/12 ESF 18","memo":"8/12 ESF 18","jnfamLots":"ESF IBC","invoice":"","createdBy":"excel-import"},{"id":"L00111","product":"HF","receivedDate":"2026-06-05","receivedDateEstimated":false,"sourceLot":"FT2642308","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-06-04","coa":true,"hold":false,"note":"","memo":"8/4 14 | 8/3 4","jnfamLots":"JAHF-260803A / JAHF-260804A","invoice":"","createdBy":"excel-import"},{"id":"L00114","product":"HF","receivedDate":"2026-06-23","receivedDateEstimated":false,"sourceLot":"FT2652101","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-06-22","coa":true,"hold":false,"note":"","memo":"8/4 2 | 8/6 16","jnfamLots":"JAHF-260804A / JAHF-260806A","invoice":"","createdBy":"excel-import"},{"id":"L00117","product":"HF","receivedDate":"2026-06-23","receivedDateEstimated":false,"sourceLot":"FT2652102","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-06-22","coa":true,"hold":false,"note":"","memo":"8/10 16 | 8/11 2","jnfamLots":"JAHF-260810A / JAHF-260811A","invoice":"","createdBy":"excel-import"},{"id":"L00120","product":"HF","receivedDate":"2026-06-24","receivedDateEstimated":false,"sourceLot":"FT2652304","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-06-23","coa":true,"hold":false,"note":"","memo":"8/13 4 | 8/11 14","jnfamLots":"JAHF-260811A / JAHF-260813A","invoice":"","createdBy":"excel-import"},{"id":"L00123","product":"HF","receivedDate":"2026-06-25","receivedDateEstimated":false,"sourceLot":"FT2652103","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-06-24","coa":true,"hold":false,"note":"","memo":"8/13 12 | 8/18 6","jnfamLots":"JAHF-260813A / JAHF-260818A","invoice":"","createdBy":"excel-import"},{"id":"L00126","product":"HF","receivedDate":"2026-07-01","receivedDateEstimated":false,"sourceLot":"FT2652307","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-06-30","coa":true,"hold":false,"note":"","memo":"16(4) | 9/8 16EA | 8/27 2","jnfamLots":"JAHF-260827A / JAHF-260908A","invoice":"","createdBy":"excel-import"},{"id":"L00129","product":"HF","receivedDate":"2026-07-01","receivedDateEstimated":false,"sourceLot":"FT2652308","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-06-30","coa":true,"hold":false,"note":"8/12 ESF 14","memo":"8/12 ESF 14 | 8/25 4","jnfamLots":"JAHF-260825A","invoice":"","createdBy":"excel-import"},{"id":"L00132","product":"HF","receivedDate":"2026-07-16","receivedDateEstimated":false,"sourceLot":"FT2652306","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-07-15","coa":true,"hold":false,"note":"","memo":"8/27 14 | 8/25 4","jnfamLots":"JAHF-260825A / JAHF-260827A","invoice":"","createdBy":"excel-import"},{"id":"L00135","product":"HF","receivedDate":"2026-07-17","receivedDateEstimated":false,"sourceLot":"FT2652305","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-07-16","coa":true,"hold":false,"note":"","memo":"8/18 10 | 8/25 8","jnfamLots":"JAHF-260818A / JAHF-260825A","invoice":"","createdBy":"excel-import"},{"id":"L00138","product":"HF","receivedDate":"2026-07-24","receivedDateEstimated":false,"sourceLot":"FT2652309","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-07-23","coa":true,"hold":false,"note":"260527 출고","memo":"10 | 8 | PVJC 8/25 10 | PVJC 9/3 8","jnfamLots":"PVJC IBC 10 / PVJC IBC 8","invoice":"","createdBy":"excel-import"},{"id":"L00141","product":"HF","receivedDate":"2026-07-24","receivedDateEstimated":false,"sourceLot":"FT2652310","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-07-23","coa":true,"hold":false,"note":"260527 출고","memo":"뚜0 | 12 | 6 | PVJC 9/3 12 | PVJC 9/18 6","jnfamLots":"PVJC IBC 12 / PVJC IBC 6","invoice":"","createdBy":"excel-import"},{"id":"L00144","product":"HF","receivedDate":"2026-08-07","receivedDateEstimated":false,"sourceLot":"FT2662305","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-08-06","coa":true,"hold":false,"note":"260617 출고","memo":"뚜0 | 18 | PVJC 9/18 18","jnfamLots":"PVJC IBC 18","invoice":"","createdBy":"excel-import"},{"id":"L00146","product":"HF","receivedDate":"2026-08-07","receivedDateEstimated":false,"sourceLot":"FT2662306","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-08-06","coa":true,"hold":false,"note":"260617 출고","memo":"뚜0 | 10 | 1 | PVJC 9/25 10 | PVJC 9/18 1 | ④ 6 | ⑥","jnfamLots":"PVJC IBC 1/ PVJC 10","invoice":"","createdBy":"excel-import"},{"id":"L00148","product":"HF","receivedDate":"2026-08-10","receivedDateEstimated":false,"sourceLot":"FT2662403","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-08-09","coa":true,"hold":false,"note":"260608 출고","memo":"9/14 16 | 9/17 2","jnfamLots":"JAHF-260914A / JAHF-260917A","invoice":"","createdBy":"excel-import"},{"id":"L00151","product":"HF","receivedDate":"2026-08-10","receivedDateEstimated":false,"sourceLot":"FT2662404","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-08-09","coa":true,"hold":false,"note":"260608 출고","memo":"9/17 14 | ① 4","jnfamLots":"JAHF-260917A / JAHF-260921A","invoice":"","createdBy":"excel-import"},{"id":"L00153","product":"HF","receivedDate":"2026-08-11","receivedDateEstimated":false,"sourceLot":"FT2662301","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-08-10","coa":true,"hold":false,"note":"260602 출고","memo":"뚜0 | ① 12 | ② 6","jnfamLots":"JAHF-260924A(6)","invoice":"","createdBy":"excel-import"},{"id":"L00155","product":"HF","receivedDate":"2026-08-11","receivedDateEstimated":false,"sourceLot":"FT2662302","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-08-10","coa":true,"hold":false,"note":"260602 출고","memo":"뚜0 | 2 | ② 2","jnfamLots":"ESF IBC / JAHF-260924A(2)","invoice":"","createdBy":"excel-import"},{"id":"L00157","product":"HF","receivedDate":"2026-08-12","receivedDateEstimated":false,"sourceLot":"FT2662309","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-08-11","coa":true,"hold":false,"note":"260625 출고","memo":"뚜0 | 2 | ② 2","jnfamLots":"ESF IBC / JAHF-260924A(2)","invoice":"","createdBy":"excel-import"},{"id":"L00158","product":"HF","receivedDate":"2026-08-12","receivedDateEstimated":false,"sourceLot":"FT2662310","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-08-11","coa":true,"hold":false,"note":"260625 출고","memo":"뚜0 | ② 6 | ③ 12","jnfamLots":"JAHF-260924A(6)","invoice":"","createdBy":"excel-import"},{"id":"L00159","product":"HF","receivedDate":"2026-08-20","receivedDateEstimated":false,"sourceLot":"FT2662407","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-08-19","coa":true,"hold":false,"note":"260618 출고","memo":"JNF2026060903 | ④ 14 | ③ 4 | ①","jnfamLots":"","invoice":"JNF2026060903","createdBy":"excel-import"},{"id":"L00160","product":"HF","receivedDate":"2026-08-20","receivedDateEstimated":false,"sourceLot":"FT2662408","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-08-19","coa":true,"hold":false,"note":"260618 출고","memo":"JNF2026060903 | 2 | ⑥ 2 | ②","jnfamLots":"ESF IBC","invoice":"JNF2026060903","createdBy":"excel-import"},{"id":"L00162","product":"HF","receivedDate":"2026-08-26","receivedDateEstimated":false,"sourceLot":"FT2672103","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-08-25","coa":true,"hold":false,"note":"260707 출고","memo":"JNF2026070301 | 2 | ⑥ 2 | ③","jnfamLots":"ESF IBC","invoice":"JNF2026070301","createdBy":"excel-import"},{"id":"L00163","product":"HF","receivedDate":"2026-08-26","receivedDateEstimated":false,"sourceLot":"FT2672104","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-08-25","coa":true,"hold":false,"note":"260707 출고","memo":"JNF2026070301 | ④ 2 | ⑤ 16 | ④","jnfamLots":"","invoice":"JNF2026070301","createdBy":"excel-import"},{"id":"L00164","product":"HF","receivedDate":"2026-08-31","receivedDateEstimated":false,"sourceLot":"FT2672401","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-08-30","coa":true,"hold":false,"note":"260706 출고","memo":"JNF2026070202 | ⑥ 12 | ⑦6 | ⑤","jnfamLots":"","invoice":"JNF2026070202","createdBy":"excel-import"},{"id":"L00165","product":"HF","receivedDate":"2026-08-31","receivedDateEstimated":false,"sourceLot":"FT2672402","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-08-30","coa":true,"hold":false,"note":"260706 출고","memo":"JNF2026070202 | 2 | ⑧ 2 | ⑥","jnfamLots":"ESF IBC","invoice":"JNF2026070202","createdBy":"excel-import"},{"id":"L00166","product":"HF","receivedDate":"2026-09-02","receivedDateEstimated":false,"sourceLot":"FT2672105","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-09-01","coa":true,"hold":false,"note":"260708 출고","memo":"JNF2026070203 | 2 | ⑧ 2 | ⑦","jnfamLots":"ESF IBC","invoice":"JNF2026070203","createdBy":"excel-import"},{"id":"L00167","product":"HF","receivedDate":"2026-09-02","receivedDateEstimated":false,"sourceLot":"FT2672106","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-09-01","coa":true,"hold":false,"note":"260708 출고","memo":"JNF2026070203 | 2 | ⑧ 2 | ⑧","jnfamLots":"ESF IBC","invoice":"JNF2026070203","createdBy":"excel-import"},{"id":"L00168","product":"HF","receivedDate":"2026-09-16","receivedDateEstimated":false,"sourceLot":"FT2672310","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-09-15","coa":true,"hold":false,"note":"260724 출고","memo":"JNF2026072201 | 뚜0 | ⑨ 8 | ⑦ 10 | ⑨","jnfamLots":"","invoice":"JNF2026072201","createdBy":"excel-import"},{"id":"L00169","product":"HF","receivedDate":"2026-09-16","receivedDateEstimated":false,"sourceLot":"FT2672311","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-09-15","coa":true,"hold":false,"note":"260724 출고","memo":"JNF2026072201 | 뚜0 | ⑧ 10 | ⑨ 8 | ⑩","jnfamLots":"","invoice":"JNF2026072201","createdBy":"excel-import"},{"id":"L00170","product":"HF","receivedDate":"2026-09-17","receivedDateEstimated":false,"sourceLot":"FT2672312","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-09-16","coa":false,"hold":false,"note":"","memo":"JNF2026072202 | 2026-08-16 | PVJC 10/5 18","jnfamLots":"PVJC IBC 18(10/5)","invoice":"JNF2026072202","createdBy":"excel-import"},{"id":"L00171","product":"HF","receivedDate":"2026-09-17","receivedDateEstimated":false,"sourceLot":"FT2672413","container":"IBC","unitKg":1150,"qtyIn":20700.0,"location":"창고","mfgDate":"","shelfLife":"2027-09-16","coa":false,"hold":false,"note":"","memo":"JNF2026072202 | 2026-08-16 | PVJC 10/5 12","jnfamLots":"PVJC IBC 12(10/5)","invoice":"JNF2026072202","createdBy":"excel-import"},{"id":"L00172","product":"HNO3_65","receivedDate":"2024-10-02","receivedDateEstimated":false,"sourceLot":"JNFU2400016","container":"ISO","unitKg":1240,"qtyIn":18260.0,"location":"창고","mfgDate":"","shelfLife":"2025-10-01","coa":true,"hold":false,"note":"출하 완료","memo":"","jnfamLots":"JAHN-250818A","invoice":"","createdBy":"excel-import"},{"id":"L00174","product":"HNO3_65","receivedDate":"2025-07-29","receivedDateEstimated":false,"sourceLot":"NT256101","container":"IBC","unitKg":1240,"qtyIn":9920.0,"location":"창고","mfgDate":"","shelfLife":"2026-07-28","coa":true,"hold":false,"note":"출하 완료","memo":"","jnfamLots":"JAHN-250904A","invoice":"","createdBy":"excel-import"},{"id":"L00176","product":"HNO3_65","receivedDate":"2025-07-29","receivedDateEstimated":true,"sourceLot":"NT256102","container":"IBC","unitKg":1240,"qtyIn":9920.0,"location":"창고","mfgDate":"","shelfLife":"","coa":true,"hold":false,"note":"출하 완료","memo":"","jnfamLots":"JAHN-250904A / JAHN-250924A","invoice":"","createdBy":"excel-import"},{"id":"L00178","product":"HNO3_65","receivedDate":"2025-07-29","receivedDateEstimated":true,"sourceLot":"NT256103","container":"IBC","unitKg":1240,"qtyIn":9920.0,"location":"창고","mfgDate":"","shelfLife":"","coa":true,"hold":false,"note":"출하 완료","memo":"","jnfamLots":"JAHN-250924A","invoice":"","createdBy":"excel-import"},{"id":"L00180","product":"HNO3_65","receivedDate":"2025-07-29","receivedDateEstimated":true,"sourceLot":"NT256104","container":"IBC","unitKg":1240,"qtyIn":9920.0,"location":"창고","mfgDate":"","shelfLife":"","coa":true,"hold":false,"note":"출하 완료","memo":"","jnfamLots":"JAHN-250924A / JAHN-260513B","invoice":"","createdBy":"excel-import"},{"id":"L00182","product":"HNO3_65","receivedDate":"2025-07-30","receivedDateEstimated":false,"sourceLot":"NT256105","container":"IBC","unitKg":1240,"qtyIn":9920.0,"location":"창고","mfgDate":"","shelfLife":"2026-07-29","coa":true,"hold":false,"note":"출하 완료","memo":"","jnfamLots":"JAHN-260513B","invoice":"","createdBy":"excel-import"},{"id":"L00184","product":"HNO3_65","receivedDate":"2025-07-30","receivedDateEstimated":true,"sourceLot":"NT256106","container":"IBC","unitKg":1240,"qtyIn":9920.0,"location":"ISO","mfgDate":"","shelfLife":"","coa":true,"hold":false,"note":"출하 완료","memo":"","jnfamLots":"JAHN-260513B/ JAHN-260528A","invoice":"","createdBy":"excel-import"},{"id":"L00186","product":"HNO3_65","receivedDate":"2025-08-06","receivedDateEstimated":false,"sourceLot":"NT256107","container":"IBC","unitKg":1240,"qtyIn":9920.0,"location":"ISO","mfgDate":"","shelfLife":"2026-08-05","coa":true,"hold":false,"note":"출하 완료","memo":"","jnfamLots":"JAHN-260528A","invoice":"","createdBy":"excel-import"},{"id":"L00188","product":"HNO3_65","receivedDate":"2025-08-06","receivedDateEstimated":true,"sourceLot":"NT256108","container":"IBC","unitKg":1240,"qtyIn":9920.0,"location":"창고","mfgDate":"","shelfLife":"","coa":true,"hold":false,"note":"","memo":"9/4 4","jnfamLots":"JAHN-260528A / JAHN-260904A","invoice":"","createdBy":"excel-import"},{"id":"L00190","product":"HNO3_65","receivedDate":"2025-08-22","receivedDateEstimated":false,"sourceLot":"NT257101","container":"IBC","unitKg":1240,"qtyIn":9920.0,"location":"창고","mfgDate":"","shelfLife":"2026-08-21","coa":true,"hold":false,"note":"","memo":"9/4 8","jnfamLots":"JAHN-260904A","invoice":"","createdBy":"excel-import"},{"id":"L00192","product":"HNO3_65","receivedDate":"2025-08-22","receivedDateEstimated":true,"sourceLot":"NT257102","container":"IBC","unitKg":1240,"qtyIn":9920.0,"location":"창고","mfgDate":"","shelfLife":"","coa":true,"hold":false,"note":"","memo":"9/4 3 | 9/11 5","jnfamLots":"JAHN-260904A / JAHN-260911A","invoice":"","createdBy":"excel-import"},{"id":"L00195","product":"HNO3_65","receivedDate":"2025-11-04","receivedDateEstimated":false,"sourceLot":"NT259101","container":"IBC","unitKg":1240,"qtyIn":9920.0,"location":"창고","mfgDate":"","shelfLife":"2026-11-03","coa":true,"hold":true,"note":"Hold","memo":"","jnfamLots":"","invoice":"","createdBy":"excel-import"},{"id":"L00196","product":"HNO3_65","receivedDate":"2025-11-04","receivedDateEstimated":true,"sourceLot":"NT259102","container":"IBC","unitKg":1240,"qtyIn":9920.0,"location":"창고","mfgDate":"","shelfLife":"","coa":true,"hold":true,"note":"Hold","memo":"6 | 9/11 2","jnfamLots":"JAHN-260911A","invoice":"","createdBy":"excel-import"},{"id":"L00198","product":"HNO3_65","receivedDate":"2025-11-04","receivedDateEstimated":true,"sourceLot":"NT259103","container":"IBC","unitKg":1240,"qtyIn":9920.0,"location":"창고","mfgDate":"","shelfLife":"","coa":true,"hold":true,"note":"Hold","memo":"8 | 9/11 6","jnfamLots":"JAHN-260911A","invoice":"","createdBy":"excel-import"},{"id":"L00200","product":"HNO3_65","receivedDate":"2025-11-04","receivedDateEstimated":true,"sourceLot":"NT259104","container":"IBC","unitKg":1240,"qtyIn":9920.0,"location":"창고","mfgDate":"","shelfLife":"","coa":true,"hold":true,"note":"Hold","memo":"7 | 1 | 9/11 2","jnfamLots":"JAHN-260911A","invoice":"","createdBy":"excel-import"},{"id":"L00202","product":"HNO3_65","receivedDate":"2026-01-28","receivedDateEstimated":false,"sourceLot":"NT25Z102","container":"IBC","unitKg":1240,"qtyIn":7440.0,"location":"창고","mfgDate":"","shelfLife":"2027-01-27","coa":true,"hold":true,"note":"Hold","memo":"6","jnfamLots":"","invoice":"","createdBy":"excel-import"},{"id":"L00203","product":"HNO3_65","receivedDate":"2026-04-03","receivedDateEstimated":false,"sourceLot":"NT262101","container":"IBC","unitKg":1240,"qtyIn":19840.0,"location":"창고","mfgDate":"","shelfLife":"2027-04-02","coa":true,"hold":false,"note":"","memo":"물 | 8/21 14 | 8/31 2","jnfamLots":"JAHN-260821A /  JAHN-260831A","invoice":"","createdBy":"excel-import"},{"id":"L00206","product":"HNO3_65","receivedDate":"2026-04-03","receivedDateEstimated":false,"sourceLot":"NT262102","container":"IBC","unitKg":1240,"qtyIn":19840.0,"location":"창고","mfgDate":"","shelfLife":"2027-04-02","coa":true,"hold":false,"note":"","memo":"물 | 8/12 15 | 8/21 1 | 18600","jnfamLots":"JAHN-260812A / JAHN-260821A","invoice":"","createdBy":"excel-import"},{"id":"L00209","product":"HNO3_65","receivedDate":"2026-04-29","receivedDateEstimated":false,"sourceLot":"NT263103","container":"IBC","unitKg":1240,"qtyIn":19840.0,"location":"창고","mfgDate":"","shelfLife":"2027-04-28","coa":true,"hold":false,"note":"","memo":"물 | 8/31 13 | 9/18 3","jnfamLots":"JAHN-260831A / JAHN-260918A","invoice":"","createdBy":"excel-import"},{"id":"L00212","product":"HNO3_65","receivedDate":"2026-05-15","receivedDateEstimated":false,"sourceLot":"NT263104","container":"IBC","unitKg":1240,"qtyIn":19840.0,"location":"창고","mfgDate":"","shelfLife":"2027-05-14","coa":true,"hold":false,"note":"","memo":"물 | 4 | 9/18 12물","jnfamLots":"JAHN-260918A","invoice":"","createdBy":"excel-import"},{"id":"L00214","product":"HNO3_65","receivedDate":"2026-05-29","receivedDateEstimated":false,"sourceLot":"NT264101","container":"IBC","unitKg":1240,"qtyIn":19840.0,"location":"창고","mfgDate":"","shelfLife":"2027-05-28","coa":true,"hold":false,"note":"","memo":"물 | 11물 | 5","jnfamLots":"","invoice":"","createdBy":"excel-import"},{"id":"L00215","product":"HNO3_65","receivedDate":"2026-06-08","receivedDateEstimated":false,"sourceLot":"NT264103","container":"IBC","unitKg":1240,"qtyIn":19840.0,"location":"창고","mfgDate":"","shelfLife":"2027-06-07","coa":true,"hold":false,"note":"","memo":"물 | 10물 | 6","jnfamLots":"","invoice":"","createdBy":"excel-import"},{"id":"L00216","product":"HNO3_65","receivedDate":"2026-06-30","receivedDateEstimated":false,"sourceLot":"NT265101","container":"IBC","unitKg":1240,"qtyIn":19840.0,"location":"창고","mfgDate":"","shelfLife":"2027-06-29","coa":true,"hold":false,"note":"","memo":"물 | 7 | 9물","jnfamLots":"","invoice":"","createdBy":"excel-import"},{"id":"L00217","product":"HNO3_65","receivedDate":"2026-06-30","receivedDateEstimated":false,"sourceLot":"NT265102","container":"IBC","unitKg":1240,"qtyIn":19840.0,"location":"창고","mfgDate":"","shelfLife":"2027-06-29","coa":true,"hold":false,"note":"","memo":"물 | 8물 | 8","jnfamLots":"","invoice":"","createdBy":"excel-import"},{"id":"L00218","product":"HNO3_65","receivedDate":"2026-07-30","receivedDateEstimated":false,"sourceLot":"NT265103","container":"IBC","unitKg":1240,"qtyIn":19840.0,"location":"창고","mfgDate":"","shelfLife":"2027-07-29","coa":true,"hold":false,"note":"260529 출고","memo":"물 | 7물 | 9","jnfamLots":"","invoice":"","createdBy":"excel-import"},{"id":"L00219","product":"HNO3_65","receivedDate":"2026-08-11","receivedDateEstimated":false,"sourceLot":"NT266101","container":"IBC","unitKg":1240,"qtyIn":19840.0,"location":"창고","mfgDate":"","shelfLife":"2027-08-10","coa":true,"hold":false,"note":"260610 출고","memo":"물 | 6물","jnfamLots":"","invoice":"","createdBy":"excel-import"},{"id":"L00220","product":"HNO3_65","receivedDate":"2026-08-14","receivedDateEstimated":false,"sourceLot":"NT266102","container":"IBC","unitKg":1240,"qtyIn":19840.0,"location":"창고","mfgDate":"","shelfLife":"2027-08-13","coa":true,"hold":false,"note":"260624 출고","memo":"물","jnfamLots":"","invoice":"","createdBy":"excel-import"},{"id":"L00221","product":"HNO3_65","receivedDate":"2026-08-14","receivedDateEstimated":false,"sourceLot":"NT266103","container":"IBC","unitKg":1240,"qtyIn":19840.0,"location":"창고","mfgDate":"","shelfLife":"2027-08-13","coa":true,"hold":false,"note":"260624 출고","memo":"JNF2026062202 | 물","jnfamLots":"","invoice":"JNF2026062202","createdBy":"excel-import"},{"id":"L00222","product":"HNO3_65","receivedDate":"2026-08-28","receivedDateEstimated":false,"sourceLot":"NT267101","container":"IBC","unitKg":1240,"qtyIn":19840.0,"location":"창고","mfgDate":"","shelfLife":"2027-08-27","coa":true,"hold":false,"note":"260703 출고","memo":"JNF2026063002 | 물","jnfamLots":"","invoice":"JNF2026063002","createdBy":"excel-import"},{"id":"L00223","product":"HNO3_65","receivedDate":"2026-08-28","receivedDateEstimated":false,"sourceLot":"NT267102","container":"IBC","unitKg":1240,"qtyIn":19840.0,"location":"창고","mfgDate":"","shelfLife":"2027-08-27","coa":true,"hold":false,"note":"260703 출고","memo":"JNF2026063002 | 물","jnfamLots":"","invoice":"JNF2026063002","createdBy":"excel-import"},{"id":"L00224","product":"HNO3_65","receivedDate":"2026-09-15","receivedDateEstimated":false,"sourceLot":"NT267105","container":"IBC","unitKg":1240,"qtyIn":19840.0,"location":"창고","mfgDate":"","shelfLife":"2027-09-14","coa":true,"hold":false,"note":"260722 출고","memo":"JNF2026072002 | 물","jnfamLots":"","invoice":"JNF2026072002","createdBy":"excel-import"},{"id":"L00225","product":"HCL","receivedDate":"2024-10-08","receivedDateEstimated":false,"sourceLot":"JNFU2400016","container":"ISO","unitKg":1100,"qtyIn":18540.0,"location":"창고","mfgDate":"","shelfLife":"2025-10-07","coa":true,"hold":false,"note":"출하 완료","memo":"","jnfamLots":"JAHC-250814A","invoice":"","createdBy":"excel-import"},{"id":"L00227","product":"HCL","receivedDate":"2025-02-23","receivedDateEstimated":false,"sourceLot":"250610","container":"Drum","unitKg":210,"qtyIn":16800.0,"location":"창고","mfgDate":"","shelfLife":"2026-02-22","coa":true,"hold":false,"note":"출하 완료","memo":"4830","jnfamLots":"JAHC-250912A","invoice":"","createdBy":"excel-import"},{"id":"L00229","product":"HCL","receivedDate":"2025-08-05","receivedDateEstimated":false,"sourceLot":"250610","container":"Drum","unitKg":210,"qtyIn":33600.0,"location":"창고","mfgDate":"","shelfLife":"2026-08-04","coa":true,"hold":false,"note":"출하완료","memo":"","jnfamLots":"JAHC-250912A / JAHC-250926A/ ESF ((JAHC-260105A))","invoice":"","createdBy":"excel-import"},{"id":"L00231","product":"HCL","receivedDate":"2025-08-06","receivedDateEstimated":false,"sourceLot":"250624","container":"Drum","unitKg":210,"qtyIn":33600.0,"location":"창고","mfgDate":"","shelfLife":"2026-08-05","coa":true,"hold":false,"note":"2026-02-04","memo":"1/30 2100 | 2/3 4200 | 2/13 1050 | 2/20 1050 | 2/24 1050 | 2/27 1050 | 3/3 1050 | 3/6 1050 | 3/10 2100 | 3/13 1050 | 3/17 2100 | 5/11 1890","jnfamLots":"ESF(JAHC-260105A), Qcells IBC, JAHC-260511A","invoice":"","createdBy":"excel-import"},{"id":"L00233","product":"HCL","receivedDate":"2025-08-08","receivedDateEstimated":false,"sourceLot":"250624","container":"Drum","unitKg":210,"qtyIn":16800.0,"location":"창고","mfgDate":"","shelfLife":"2026-08-07","coa":true,"hold":false,"note":"출하 완료","memo":"5/11 ISO","jnfamLots":"JAHC-260511A","invoice":"","createdBy":"excel-import"},{"id":"L00235","product":"HCL","receivedDate":"2025-09-03","receivedDateEstimated":false,"sourceLot":"250711","container":"Drum","unitKg":210,"qtyIn":33600.0,"location":"창고","mfgDate":"","shelfLife":"2026-09-02","coa":true,"hold":false,"note":"출하 완료","memo":"5/14 iso 82 | 6/3 78","jnfamLots":"JAHC-260514A","invoice":"","createdBy":"excel-import"},{"id":"L00237","product":"HCL","receivedDate":"2025-09-04","receivedDateEstimated":false,"sourceLot":"250711","container":"Drum","unitKg":210,"qtyIn":16800.0,"location":"창고","mfgDate":"","shelfLife":"2026-09-03","coa":true,"hold":false,"note":"","memo":"6/3 7 | 6/26 69 | 7/13 4 | 17760 | 840","jnfamLots":"JAHC-260626A / JAHC-260713A","invoice":"","createdBy":"excel-import"},{"id":"L00239","product":"HCL","receivedDate":"2026-03-24","receivedDateEstimated":false,"sourceLot":"LT261201","container":"IBC","unitKg":1090,"qtyIn":19620.0,"location":"창고","mfgDate":"","shelfLife":"2027-03-23","coa":true,"hold":false,"note":"","memo":"13 | 4/20 2 | PVJC | 6/26 3 Q | 7/13 13 | 14170","jnfamLots":"JAHC-260626A / JAHC-260713A","invoice":"","createdBy":"excel-import"},{"id":"L00241","product":"HCL","receivedDate":"2026-03-25","receivedDateEstimated":false,"sourceLot":"LT261202","container":"IBC","unitKg":1090,"qtyIn":19620.0,"location":"창고","mfgDate":"","shelfLife":"2027-03-24","coa":true,"hold":false,"note":"","memo":"3 | 15 | 7/13 3 | 8/7 15 | 3270","jnfamLots":"JAHC-260713A / JAHC-260807A","invoice":"","createdBy":"excel-import"},{"id":"L00243","product":"HCL","receivedDate":"2026-03-27","receivedDateEstimated":false,"sourceLot":"LT262202","container":"IBC","unitKg":1100,"qtyIn":19800.0,"location":"창고","mfgDate":"","shelfLife":"2027-03-26","coa":true,"hold":false,"note":"","memo":"2 | 16 | 8/7 2 | 8/24 16 | iso 18550","jnfamLots":"JAHC-260807A / JAHC-260824A","invoice":"","createdBy":"excel-import"},{"id":"L00246","product":"HCL","receivedDate":"2026-04-01","receivedDateEstimated":false,"sourceLot":"LT262201","container":"IBC","unitKg":1100,"qtyIn":19800.0,"location":"창고","mfgDate":"","shelfLife":"2027-03-31","coa":true,"hold":false,"note":"","memo":"17 | 1 | 8/24 1 | 9/2 17","jnfamLots":"JAHC-260824A / JAHC-260902A","invoice":"","createdBy":"excel-import"},{"id":"L00249","product":"HCL","receivedDate":"2026-04-24","receivedDateEstimated":false,"sourceLot":"LT263201","container":"IBC","unitKg":1100,"qtyIn":19800.0,"location":"창고","mfgDate":"","shelfLife":"2027-04-23","coa":true,"hold":false,"note":"","memo":"17 | 1 | 9/16 17","jnfamLots":"JAHC-26090216A","invoice":"","createdBy":"excel-import"},{"id":"L00250","product":"HCL","receivedDate":"2026-04-27","receivedDateEstimated":false,"sourceLot":"LT263202","container":"IBC","unitKg":1100,"qtyIn":19800.0,"location":"창고","mfgDate":"","shelfLife":"2027-04-26","coa":true,"hold":false,"note":"","memo":"16 | 2","jnfamLots":"","invoice":"","createdBy":"excel-import"},{"id":"L00251","product":"HCL","receivedDate":"2026-06-13","receivedDateEstimated":false,"sourceLot":"LT264201","container":"IBC","unitKg":1100,"qtyIn":19800.0,"location":"창고","mfgDate":"","shelfLife":"2027-06-12","coa":true,"hold":false,"note":"","memo":"15 | 3","jnfamLots":"","invoice":"","createdBy":"excel-import"},{"id":"L00252","product":"HCL","receivedDate":"2026-06-13","receivedDateEstimated":false,"sourceLot":"LT264202","container":"IBC","unitKg":1100,"qtyIn":19800.0,"location":"창고","mfgDate":"","shelfLife":"2027-06-12","coa":true,"hold":false,"note":"","memo":"4 | 14","jnfamLots":"","invoice":"","createdBy":"excel-import"},{"id":"L00253","product":"HCL","receivedDate":"2026-06-22","receivedDateEstimated":false,"sourceLot":"260428","container":"IBC","unitKg":1100,"qtyIn":19800.0,"location":"창고","mfgDate":"","shelfLife":"2027-06-21","coa":true,"hold":false,"note":"","memo":"13 | 5","jnfamLots":"","invoice":"","createdBy":"excel-import"},{"id":"L00254","product":"HCL","receivedDate":"2026-06-22","receivedDateEstimated":false,"sourceLot":"260428","container":"IBC","unitKg":1100,"qtyIn":19800.0,"location":"창고","mfgDate":"","shelfLife":"2027-06-21","coa":true,"hold":false,"note":"","memo":"12","jnfamLots":"","invoice":"","createdBy":"excel-import"},{"id":"L00255","product":"HCL","receivedDate":"2026-06-23","receivedDateEstimated":false,"sourceLot":"260428","container":"IBC","unitKg":1100,"qtyIn":19800.0,"location":"창고","mfgDate":"","shelfLife":"2027-06-22","coa":true,"hold":false,"note":"","memo":"","jnfamLots":"","invoice":"","createdBy":"excel-import"},{"id":"L00256","product":"HCL","receivedDate":"2026-07-02","receivedDateEstimated":false,"sourceLot":"LT265202","container":"IBC","unitKg":1100,"qtyIn":19800.0,"location":"창고","mfgDate":"","shelfLife":"2027-07-01","coa":true,"hold":false,"note":"5/18 출고","memo":"","jnfamLots":"","invoice":"","createdBy":"excel-import"},{"id":"L00257","product":"HCL","receivedDate":"2026-07-02","receivedDateEstimated":false,"sourceLot":"LT265203","container":"IBC","unitKg":1100,"qtyIn":19800.0,"location":"창고","mfgDate":"","shelfLife":"2027-07-01","coa":true,"hold":false,"note":"5/18 출고","memo":"8/23 PVJC 2","jnfamLots":"PVJC","invoice":"","createdBy":"excel-import"},{"id":"L00259","product":"HCL","receivedDate":"2026-07-08","receivedDateEstimated":false,"sourceLot":"LT265201","container":"IBC","unitKg":1100,"qtyIn":19800.0,"location":"창고","mfgDate":"","shelfLife":"2027-07-07","coa":true,"hold":false,"note":"5/18 출고","memo":"","jnfamLots":"","invoice":"","createdBy":"excel-import"},{"id":"L00260","product":"HCL","receivedDate":"2026-07-29","receivedDateEstimated":false,"sourceLot":"LT266201","container":"IBC","unitKg":1100,"qtyIn":19800.0,"location":"창고","mfgDate":"","shelfLife":"2027-07-28","coa":true,"hold":false,"note":"6/2 출고","memo":"","jnfamLots":"","invoice":"","createdBy":"excel-import"},{"id":"L00261","product":"HCL","receivedDate":"2026-07-29","receivedDateEstimated":false,"sourceLot":"LT266202","container":"IBC","unitKg":1100,"qtyIn":19800.0,"location":"창고","mfgDate":"","shelfLife":"2027-07-28","coa":true,"hold":false,"note":"6/2 출고","memo":"","jnfamLots":"","invoice":"","createdBy":"excel-import"},{"id":"L00262","product":"HCL","receivedDate":"2026-07-29","receivedDateEstimated":false,"sourceLot":"LT266203","container":"IBC","unitKg":1100,"qtyIn":19800.0,"location":"창고","mfgDate":"","shelfLife":"2027-07-28","coa":true,"hold":false,"note":"6/2 출고","memo":"","jnfamLots":"","invoice":"","createdBy":"excel-import"},{"id":"L00263","product":"HCL","receivedDate":"2026-08-13","receivedDateEstimated":false,"sourceLot":"260526","container":"IBC","unitKg":1100,"qtyIn":39600.0,"location":"창고","mfgDate":"","shelfLife":"2027-08-12","coa":true,"hold":false,"note":"","memo":"JNF2026060403 | 144430","jnfamLots":"","invoice":"JNF2026060403","createdBy":"excel-import"},{"id":"L00264","product":"HCL","receivedDate":"2026-08-20","receivedDateEstimated":false,"sourceLot":"260526","container":"IBC","unitKg":1100,"qtyIn":39600.0,"location":"창고","mfgDate":"","shelfLife":"2027-08-19","coa":true,"hold":false,"note":"","memo":"JNF2026060902","jnfamLots":"","invoice":"JNF2026060902","createdBy":"excel-import"},{"id":"L00265","product":"HCL","receivedDate":"2026-09-01","receivedDateEstimated":false,"sourceLot":"LT267201","container":"IBC","unitKg":1100,"qtyIn":19800.0,"location":"창고","mfgDate":"","shelfLife":"2027-08-31","coa":false,"hold":false,"note":"59400","memo":"JNF2026062901","jnfamLots":"","invoice":"JNF2026062901","createdBy":"excel-import"},{"id":"L00266","product":"HCL","receivedDate":"2026-09-01","receivedDateEstimated":false,"sourceLot":"LT267202","container":"IBC","unitKg":1100,"qtyIn":19800.0,"location":"창고","mfgDate":"","shelfLife":"2027-08-31","coa":false,"hold":false,"note":"","memo":"JNF2026062901","jnfamLots":"","invoice":"JNF2026062901","createdBy":"excel-import"},{"id":"L00267","product":"HCL","receivedDate":"2026-09-01","receivedDateEstimated":false,"sourceLot":"LT267203","container":"IBC","unitKg":1100,"qtyIn":19800.0,"location":"창고","mfgDate":"","shelfLife":"2027-08-31","coa":false,"hold":false,"note":"","memo":"JNF2026062901","jnfamLots":"","invoice":"JNF2026062901","createdBy":"excel-import"},{"id":"L00268","product":"HCL","receivedDate":"2026-09-18","receivedDateEstimated":false,"sourceLot":"260701","container":"IBC","unitKg":1100,"qtyIn":39600.0,"location":"창고","mfgDate":"","shelfLife":"2027-09-17","coa":false,"hold":false,"note":"","memo":"JNF2026071601","jnfamLots":"","invoice":"JNF2026071601","createdBy":"excel-import"},{"id":"L00269","product":"HNO3_68","receivedDate":"2026-01-28","receivedDateEstimated":false,"sourceLot":"NT25Z101","container":"IBC","unitKg":1240,"qtyIn":12400.0,"location":"창고","mfgDate":"","shelfLife":"","coa":true,"hold":false,"note":"2027-01-27","memo":"2/5 2480(E)","jnfamLots":"ESF Qual","invoice":"","createdBy":"excel-import"},{"id":"L00271","product":"HNO3_68","receivedDate":"2026-04-28","receivedDateEstimated":false,"sourceLot":"NT263101/2","container":"IBC","unitKg":1240,"qtyIn":19840.0,"location":"창고","mfgDate":"","shelfLife":"","coa":true,"hold":false,"note":"2027-04-27","memo":"","jnfamLots":"","invoice":"","createdBy":"excel-import"},{"id":"L00272","product":"HNO3_68","receivedDate":"2026-05-15","receivedDateEstimated":false,"sourceLot":"NT263105","container":"IBC","unitKg":1240,"qtyIn":19840.0,"location":"창고","mfgDate":"","shelfLife":"","coa":true,"hold":false,"note":"2027-05-14","memo":"","jnfamLots":"","invoice":"","createdBy":"excel-import"},{"id":"L00273","product":"HNO3_68","receivedDate":"2026-06-16","receivedDateEstimated":false,"sourceLot":"NT264102/4","container":"IBC","unitKg":1240,"qtyIn":19840.0,"location":"창고","mfgDate":"","shelfLife":"","coa":true,"hold":false,"note":"2027-06-15","memo":"","jnfamLots":"","invoice":"","createdBy":"excel-import"},{"id":"L00274","product":"H2SO4","receivedDate":"2026-04-23","receivedDateEstimated":false,"sourceLot":"ST263101","container":"IBC","unitKg":1600,"qtyIn":16000.0,"location":"창고","mfgDate":"","shelfLife":"2027-03-06","coa":true,"hold":false,"note":"","memo":"suniva | 4/27 1EA","jnfamLots":"","invoice":"","createdBy":"excel-import"}],"usage":[{"id":"U00002","lotId":"L00001","product":"HF","date":"2024-10-02","type":"이관(누적)","qtyKg":18450.0,"ea":null,"customer":"","jnfamLot":"JAHF-250813A","note":"엑셀 이관 누적 사용량","createdBy":"excel-import"},{"id":"U00004","lotId":"L00003","product":"HF","date":"2024-10-02","type":"이관(누적)","qtyKg":18510.0,"ea":null,"customer":"","jnfamLot":"JAHF-250903A","note":"엑셀 이관 누적 사용량","createdBy":"excel-import"},{"id":"U00006","lotId":"L00005","product":"HF","date":"2025-05-06","type":"이관(누적)","qtyKg":16100.0,"ea":null,"customer":"","jnfamLot":"JAHF-250908A","note":"엑셀 이관 누적 사용량","createdBy":"excel-import"},{"id":"U00008","lotId":"L00007","product":"HF","date":"2025-05-06","type":"이관(누적)","qtyKg":4600.0,"ea":null,"customer":"","jnfamLot":"JAHF-250908A / JAHF-250915A","note":"엑셀 이관 누적 사용량","createdBy":"excel-import"},{"id":"U00010","lotId":"L00009","product":"HF","date":"2025-05-06","type":"이관(누적)","qtyKg":20700.0,"ea":null,"customer":"","jnfamLot":"JAHF-250915A / JAHF-250919A","note":"엑셀 이관 누적 사용량","createdBy":"excel-import"},{"id":"U00012","lotId":"L00011","product":"HF","date":"2025-08-06","type":"이관(누적)","qtyKg":17250.0,"ea":null,"customer":"","jnfamLot":"JAHF-250919A / JAHF-260513A","note":"엑셀 이관 누적 사용량 / 기록: 5/13 3 iso","createdBy":"excel-import"},{"id":"U00014","lotId":"L00013","product":"HF","date":"2026-05-13","type":"ISO충전","qtyKg":14950.0,"ea":13.0,"customer":"","jnfamLot":"JAHF-260513A","note":"엑셀 이관: 5/13 13 iso","createdBy":"excel-import"},{"id":"U00015","lotId":"L00013","product":"HF","date":"2026-05-18","type":"ISO충전","qtyKg":2300.0,"ea":2.0,"customer":"","jnfamLot":"JAHF-260518A","note":"엑셀 이관: 5/18 2 iso","createdBy":"excel-import"},{"id":"U00017","lotId":"L00016","product":"HF","date":"2026-05-18","type":"ISO충전","qtyKg":6900.0,"ea":6.0,"customer":"","jnfamLot":"JAHF-260518A","note":"엑셀 이관: 5/18 6 iso","createdBy":"excel-import"},{"id":"U00019","lotId":"L00018","product":"HF","date":"2026-02-10","type":"출하","qtyKg":3285.0,"ea":3.0,"customer":"","jnfamLot":"","note":"엑셀 이관: 2/10 3EA","createdBy":"excel-import"},{"id":"U00020","lotId":"L00018","product":"HF","date":"2026-02-13","type":"출하","qtyKg":2190.0,"ea":2.0,"customer":"","jnfamLot":"","note":"엑셀 이관: 2/13 2EA","createdBy":"excel-import"},{"id":"U00021","lotId":"L00018","product":"HF","date":"2026-02-15","type":"출하","qtyKg":1095.0,"ea":1.0,"customer":"","jnfamLot":"","note":"엑셀 이관: 2/15 1EA","createdBy":"excel-import"},{"id":"U00022","lotId":"L00018","product":"HF","date":"2026-02-17","type":"출하","qtyKg":2190.0,"ea":2.0,"customer":"","jnfamLot":"","note":"엑셀 이관: 2/17 2EA","createdBy":"excel-import"},{"id":"U00023","lotId":"L00018","product":"HF","date":"2026-02-20","type":"출하","qtyKg":2190.0,"ea":2.0,"customer":"","jnfamLot":"","note":"엑셀 이관: 2/20 2EA","createdBy":"excel-import"},{"id":"U00024","lotId":"L00018","product":"HF","date":"2026-02-24","type":"출하","qtyKg":5475.0,"ea":5.0,"customer":"","jnfamLot":"","note":"엑셀 이관: 2/24 5EA","createdBy":"excel-import"},{"id":"U00025","lotId":"L00018","product":"HF","date":"2026-02-27","type":"출하","qtyKg":3285.0,"ea":3.0,"customer":"","jnfamLot":"","note":"엑셀 이관: 2/27 3EA","createdBy":"excel-import"},{"id":"U00027","lotId":"L00026","product":"HF","date":"2026-01-30","type":"출하","qtyKg":4380.0,"ea":4.0,"customer":"","jnfamLot":"","note":"엑셀 이관: 1/30 4EA","createdBy":"excel-import"},{"id":"U00028","lotId":"L00026","product":"HF","date":"2026-02-03","type":"출하","qtyKg":6570.0,"ea":6.0,"customer":"","jnfamLot":"","note":"엑셀 이관: 2/3 6EA","createdBy":"excel-import"},{"id":"U00029","lotId":"L00026","product":"HF","date":"2026-02-05","type":"출하","qtyKg":6570.0,"ea":6.0,"customer":"","jnfamLot":"","note":"엑셀 이관: 2/5 6EA","createdBy":"excel-import"},{"id":"U00030","lotId":"L00026","product":"HF","date":"2026-05-18","type":"출하","qtyKg":2190.0,"ea":2.0,"customer":"","jnfamLot":"","note":"엑셀 이관: 5/18 2EA","createdBy":"excel-import"},{"id":"U00032","lotId":"L00031","product":"HF","date":"2026-02-13","type":"출하","qtyKg":3300.0,"ea":3.0,"customer":"","jnfamLot":"","note":"엑셀 이관: 2/13 3EA","createdBy":"excel-import"},{"id":"U00033","lotId":"L00031","product":"HF","date":"2026-02-27","type":"출하","qtyKg":1100.0,"ea":1.0,"customer":"","jnfamLot":"","note":"엑셀 이관: 2/27 1EA","createdBy":"excel-import"},{"id":"U00034","lotId":"L00031","product":"HF","date":"2026-05-28","type":"ISO충전","qtyKg":7700.0,"ea":7.0,"customer":"","jnfamLot":"JAHF-260528B","note":"엑셀 이관: 5/28 7 iso","createdBy":"excel-import"},{"id":"U00035","lotId":"L00031","product":"HF","date":"2026-06-01","type":"ISO충전","qtyKg":7700.0,"ea":7.0,"customer":"","jnfamLot":"JAHF-260601A","note":"엑셀 이관: 6/1 7 iso","createdBy":"excel-import"},{"id":"U00037","lotId":"L00036","product":"HF","date":"2025-11-13","type":"이관(누적)","qtyKg":19800.0,"ea":null,"customer":"","jnfamLot":"JAHF-260519A","note":"엑셀 이관 누적 사용량 / 기록: 5/19 16 iso","createdBy":"excel-import"},{"id":"U00039","lotId":"L00038","product":"HF","date":"2026-02-27","type":"출하","qtyKg":3285.0,"ea":3.0,"customer":"","jnfamLot":"","note":"엑셀 이관: 2/27 3EA","createdBy":"excel-import"},{"id":"U00040","lotId":"L00038","product":"HF","date":"2026-03-24","type":"출하","qtyKg":4380.0,"ea":4.0,"customer":"","jnfamLot":"","note":"엑셀 이관: 3/24 4EA","createdBy":"excel-import"},{"id":"U00041","lotId":"L00038","product":"HF","date":"2026-03-26","type":"출하","qtyKg":2190.0,"ea":2.0,"customer":"","jnfamLot":"","note":"엑셀 이관: 3/26 2EA","createdBy":"excel-import"},{"id":"U00042","lotId":"L00038","product":"HF","date":"2026-03-31","type":"반납","qtyKg":-4380.0,"ea":4.0,"customer":"","jnfamLot":"","note":"엑셀 이관: 3/31 4 반납","createdBy":"excel-import"},{"id":"U00043","lotId":"L00038","product":"HF","date":"2026-05-18","type":"ISO충전","qtyKg":2190.0,"ea":2.0,"customer":"","jnfamLot":"","note":"엑셀 이관: 5/18 2EA iso","createdBy":"excel-import"},{"id":"U00044","lotId":"L00038","product":"HF","date":"2026-05-19","type":"ISO충전","qtyKg":1095.0,"ea":1.0,"customer":"","jnfamLot":"JAHF-260519A","note":"엑셀 이관: 5/19 1 iso","createdBy":"excel-import"},{"id":"U00045","lotId":"L00038","product":"HF","date":"2026-05-28","type":"ISO충전","qtyKg":10950.0,"ea":10.0,"customer":"","jnfamLot":"JAHF-260528B","note":"엑셀 이관: 5/28 10 iso","createdBy":"excel-import"},{"id":"U00047","lotId":"L00046","product":"HF","date":"2026-03-03","type":"출하","qtyKg":6540.0,"ea":6.0,"customer":"","jnfamLot":"","note":"엑셀 이관: 3/3 6EA","createdBy":"excel-import"},{"id":"U00048","lotId":"L00046","product":"HF","date":"2026-03-05","type":"출하","qtyKg":10900.0,"ea":10.0,"customer":"","jnfamLot":"","note":"엑셀 이관: 3/5 10EA","createdBy":"excel-import"},{"id":"U00049","lotId":"L00046","product":"HF","date":"2026-03-31","type":"반납","qtyKg":-1090.0,"ea":1.0,"customer":"","jnfamLot":"","note":"엑셀 이관: 3/31 1 반납","createdBy":"excel-import"},{"id":"U00050","lotId":"L00046","product":"HF","date":"2026-05-18","type":"ISO충전","qtyKg":3270.0,"ea":3.0,"customer":"","jnfamLot":"","note":"엑셀 이관: 5/18 3 iso","createdBy":"excel-import"},{"id":"U00052","lotId":"L00051","product":"HF","date":"2026-03-06","type":"출하","qtyKg":5450.0,"ea":5.0,"customer":"","jnfamLot":"","note":"엑셀 이관: 3/6 5EA","createdBy":"excel-import"},{"id":"U00053","lotId":"L00051","product":"HF","date":"2026-03-13","type":"출하","qtyKg":7630.0,"ea":7.0,"customer":"","jnfamLot":"","note":"엑셀 이관: 3/13 7EA","createdBy":"excel-import"},{"id":"U00054","lotId":"L00051","product":"HF","date":"2026-03-17","type":"출하","qtyKg":6540.0,"ea":6.0,"customer":"","jnfamLot":"","note":"엑셀 이관: 3/17 6EA","createdBy":"excel-import"},{"id":"U00056","lotId":"L00055","product":"HF","date":"2026-06-01","type":"ISO충전","qtyKg":11000.0,"ea":10.0,"customer":"","jnfamLot":"JAHF-260601A","note":"엑셀 이관: 6/1 10 iso","createdBy":"excel-import"},{"id":"U00057","lotId":"L00055","product":"HF","date":"2026-06-02","type":"ISO충전","qtyKg":8800.0,"ea":8.0,"customer":"","jnfamLot":"JAHF-260602A","note":"엑셀 이관: 6/2 8 iso","createdBy":"excel-import"},{"id":"U00059","lotId":"L00058","product":"HF","date":"2026-06-02","type":"ISO충전","qtyKg":9900.0,"ea":9.0,"customer":"","jnfamLot":"JAHF-260602A","note":"엑셀 이관: 6/2 9 iso","createdBy":"excel-import"},{"id":"U00060","lotId":"L00058","product":"HF","date":"2026-06-03","type":"출하","qtyKg":9900.0,"ea":9.0,"customer":"","jnfamLot":"","note":"엑셀 이관: 6/3 9","createdBy":"excel-import"},{"id":"U00062","lotId":"L00061","product":"HF","date":"2026-06-03","type":"출하","qtyKg":8800.0,"ea":8.0,"customer":"","jnfamLot":"","note":"엑셀 이관: 6/3 8","createdBy":"excel-import"},{"id":"U00063","lotId":"L00061","product":"HF","date":"2026-06-09","type":"출하","qtyKg":11000.0,"ea":10.0,"customer":"","jnfamLot":"JAHF-260609A","note":"엑셀 이관: 6/9 10","createdBy":"excel-import"},{"id":"U00065","lotId":"L00064","product":"HF","date":"2026-06-09","type":"출하","qtyKg":7700.0,"ea":7.0,"customer":"","jnfamLot":"JAHF-260609A","note":"엑셀 이관: 6/9 7","createdBy":"excel-import"},{"id":"U00066","lotId":"L00064","product":"HF","date":"2026-06-16","type":"출하","qtyKg":12100.0,"ea":11.0,"customer":"","jnfamLot":"JAHF-260616A","note":"엑셀 이관: 6/16 11","createdBy":"excel-import"},{"id":"U00068","lotId":"L00067","product":"HF","date":"2026-06-16","type":"출하","qtyKg":6900.0,"ea":6.0,"customer":"","jnfamLot":"JAHF-260616A","note":"엑셀 이관: 6/16 6","createdBy":"excel-import"},{"id":"U00069","lotId":"L00067","product":"HF","date":"2026-06-23","type":"출하","qtyKg":13800.0,"ea":12.0,"customer":"","jnfamLot":"JAHF-260623A","note":"엑셀 이관: 6/23 12","createdBy":"excel-import"},{"id":"U00071","lotId":"L00070","product":"HF","date":"2026-06-23","type":"출하","qtyKg":4600.0,"ea":4.0,"customer":"","jnfamLot":"JAHF-260623A","note":"엑셀 이관: 6/23 4","createdBy":"excel-import"},{"id":"U00072","lotId":"L00070","product":"HF","date":"2026-06-30","type":"출하","qtyKg":16100.0,"ea":14.0,"customer":"","jnfamLot":"JAHF-260630A","note":"엑셀 이관: 6/30 14","createdBy":"excel-import"},{"id":"U00074","lotId":"L00073","product":"HF","date":"2026-06-30","type":"출하","qtyKg":2300.0,"ea":2.0,"customer":"","jnfamLot":"JAHF-260630A","note":"엑셀 이관: 6/30 2","createdBy":"excel-import"},{"id":"U00075","lotId":"L00073","product":"HF","date":"2026-07-02","type":"출하","qtyKg":18400.0,"ea":16.0,"customer":"","jnfamLot":"JAHF-260702A","note":"엑셀 이관: 7/2 16","createdBy":"excel-import"},{"id":"U00077","lotId":"L00076","product":"HF","date":"2026-06-29","type":"출하","qtyKg":11500.0,"ea":10.0,"customer":"PVJC","jnfamLot":"","note":"엑셀 이관: 6/29 10 pvjc","createdBy":"excel-import"},{"id":"U00078","lotId":"L00076","product":"HF","date":"2026-07-07","type":"출하","qtyKg":9200.0,"ea":8.0,"customer":"","jnfamLot":"JAHF-260707A","note":"엑셀 이관: 7/7 8","createdBy":"excel-import"},{"id":"U00080","lotId":"L00079","product":"HF","date":"2026-07-07","type":"출하","qtyKg":9200.0,"ea":8.0,"customer":"","jnfamLot":"JAHF-260707A","note":"엑셀 이관: 7/7 8","createdBy":"excel-import"},{"id":"U00081","lotId":"L00079","product":"HF","date":"2026-07-13","type":"출하","qtyKg":11500.0,"ea":10.0,"customer":"","jnfamLot":"","note":"엑셀 이관: 7/13 10","createdBy":"excel-import"},{"id":"U00083","lotId":"L00082","product":"HF","date":"2026-07-13","type":"출하","qtyKg":6900.0,"ea":6.0,"customer":"","jnfamLot":"","note":"엑셀 이관: 7/13 6","createdBy":"excel-import"},{"id":"U00084","lotId":"L00082","product":"HF","date":"2026-07-16","type":"출하","qtyKg":13800.0,"ea":12.0,"customer":"","jnfamLot":"JAHF-260716A","note":"엑셀 이관: 7/16 12","createdBy":"excel-import"},{"id":"U00086","lotId":"L00085","product":"HF","date":"2026-07-21","type":"출하","qtyKg":16100.0,"ea":14.0,"customer":"","jnfamLot":"JAHF-260721A","note":"엑셀 이관: 7/21 14","createdBy":"excel-import"},{"id":"U00087","lotId":"L00085","product":"HF","date":"2026-07-16","type":"출하","qtyKg":4600.0,"ea":4.0,"customer":"","jnfamLot":"JAHF-260716A","note":"엑셀 이관: 7/16 4","createdBy":"excel-import"},{"id":"U00089","lotId":"L00088","product":"HF","date":"2026-07-21","type":"출하","qtyKg":2300.0,"ea":2.0,"customer":"","jnfamLot":"JAHF-260721A","note":"엑셀 이관: 7/21 2","createdBy":"excel-import"},{"id":"U00090","lotId":"L00088","product":"HF","date":"2026-07-23","type":"출하","qtyKg":18400.0,"ea":16.0,"customer":"","jnfamLot":"JAHF-260723A","note":"엑셀 이관: 7/23 16","createdBy":"excel-import"},{"id":"U00092","lotId":"L00091","product":"HF","date":"2026-07-28","type":"출하","qtyKg":18400.0,"ea":16.0,"customer":"","jnfamLot":"JAHF-260728A","note":"엑셀 이관: 7/28 16","createdBy":"excel-import"},{"id":"U00093","lotId":"L00091","product":"HF","date":"2026-07-29","type":"출하","qtyKg":2300.0,"ea":2.0,"customer":"","jnfamLot":"JAHF-260729A","note":"엑셀 이관: 7/29 2","createdBy":"excel-import"},{"id":"U00095","lotId":"L00094","product":"HF","date":"2026-06-08","type":"출하","qtyKg":18400.0,"ea":16.0,"customer":"ESF","jnfamLot":"","note":"엑셀 이관: 6/8 16 ESF","createdBy":"excel-import"},{"id":"U00096","lotId":"L00094","product":"HF","date":"2026-07-29","type":"출하","qtyKg":2300.0,"ea":2.0,"customer":"","jnfamLot":"JAHF-260729A","note":"엑셀 이관: 7/29 2","createdBy":"excel-import"},{"id":"U00098","lotId":"L00097","product":"HF","date":"2026-07-30","type":"출하","qtyKg":6900.0,"ea":6.0,"customer":"","jnfamLot":"JAHF-260730A","note":"엑셀 이관: 7/30 6","createdBy":"excel-import"},{"id":"U00099","lotId":"L00097","product":"HF","date":"2026-07-29","type":"출하","qtyKg":13800.0,"ea":12.0,"customer":"","jnfamLot":"JAHF-260729A","note":"엑셀 이관: 7/29 12","createdBy":"excel-import"},{"id":"U00101","lotId":"L00100","product":"HF","date":"2026-07-30","type":"출하","qtyKg":11500.0,"ea":10.0,"customer":"","jnfamLot":"JAHF-260730A","note":"엑셀 이관: 7/30 10","createdBy":"excel-import"},{"id":"U00102","lotId":"L00100","product":"HF","date":"2026-08-03","type":"출하","qtyKg":9200.0,"ea":8.0,"customer":"","jnfamLot":"JAHF-260803A","note":"엑셀 이관: 8/3 8","createdBy":"excel-import"},{"id":"U00104","lotId":"L00103","product":"HF","date":"2026-07-29","type":"출하","qtyKg":18400.0,"ea":16.0,"customer":"ESF","jnfamLot":"","note":"엑셀 이관: 7/29 ESF 16","createdBy":"excel-import"},{"id":"U00105","lotId":"L00103","product":"HF","date":"2026-08-03","type":"출하","qtyKg":2300.0,"ea":2.0,"customer":"","jnfamLot":"JAHF-260803A","note":"엑셀 이관: 8/3 2","createdBy":"excel-import"},{"id":"U00107","lotId":"L00106","product":"HF","date":"2026-08-02","type":"출하","qtyKg":18400.0,"ea":16.0,"customer":"ESF","jnfamLot":"","note":"엑셀 이관: 8/2 ESF 16","createdBy":"excel-import"},{"id":"U00108","lotId":"L00106","product":"HF","date":"2026-08-03","type":"출하","qtyKg":2300.0,"ea":2.0,"customer":"","jnfamLot":"JAHF-260803A","note":"엑셀 이관: 8/3 2","createdBy":"excel-import"},{"id":"U00110","lotId":"L00109","product":"HF","date":"2026-08-12","type":"출하","qtyKg":20700.0,"ea":18.0,"customer":"ESF","jnfamLot":"","note":"엑셀 이관: 8/12 ESF 18","createdBy":"excel-import"},{"id":"U00112","lotId":"L00111","product":"HF","date":"2026-08-04","type":"출하","qtyKg":16100.0,"ea":14.0,"customer":"","jnfamLot":"JAHF-260804A","note":"엑셀 이관: 8/4 14","createdBy":"excel-import"},{"id":"U00113","lotId":"L00111","product":"HF","date":"2026-08-03","type":"출하","qtyKg":4600.0,"ea":4.0,"customer":"","jnfamLot":"JAHF-260803A","note":"엑셀 이관: 8/3 4","createdBy":"excel-import"},{"id":"U00115","lotId":"L00114","product":"HF","date":"2026-08-04","type":"출하","qtyKg":2300.0,"ea":2.0,"customer":"","jnfamLot":"JAHF-260804A","note":"엑셀 이관: 8/4 2","createdBy":"excel-import"},{"id":"U00116","lotId":"L00114","product":"HF","date":"2026-08-06","type":"출하","qtyKg":18400.0,"ea":16.0,"customer":"","jnfamLot":"JAHF-260806A","note":"엑셀 이관: 8/6 16","createdBy":"excel-import"},{"id":"U00118","lotId":"L00117","product":"HF","date":"2026-08-10","type":"출하","qtyKg":18400.0,"ea":16.0,"customer":"","jnfamLot":"JAHF-260810A","note":"엑셀 이관: 8/10 16","createdBy":"excel-import"},{"id":"U00119","lotId":"L00117","product":"HF","date":"2026-08-11","type":"출하","qtyKg":2300.0,"ea":2.0,"customer":"","jnfamLot":"JAHF-260811A","note":"엑셀 이관: 8/11 2","createdBy":"excel-import"},{"id":"U00121","lotId":"L00120","product":"HF","date":"2026-08-13","type":"출하","qtyKg":4600.0,"ea":4.0,"customer":"","jnfamLot":"JAHF-260813A","note":"엑셀 이관: 8/13 4","createdBy":"excel-import"},{"id":"U00122","lotId":"L00120","product":"HF","date":"2026-08-11","type":"출하","qtyKg":16100.0,"ea":14.0,"customer":"","jnfamLot":"JAHF-260811A","note":"엑셀 이관: 8/11 14","createdBy":"excel-import"},{"id":"U00124","lotId":"L00123","product":"HF","date":"2026-08-13","type":"출하","qtyKg":13800.0,"ea":12.0,"customer":"","jnfamLot":"JAHF-260813A","note":"엑셀 이관: 8/13 12","createdBy":"excel-import"},{"id":"U00125","lotId":"L00123","product":"HF","date":"2026-08-18","type":"출하","qtyKg":6900.0,"ea":6.0,"customer":"","jnfamLot":"JAHF-260818A","note":"엑셀 이관: 8/18 6","createdBy":"excel-import"},{"id":"U00127","lotId":"L00126","product":"HF","date":"2026-09-08","type":"출하","qtyKg":18400.0,"ea":16.0,"customer":"","jnfamLot":"JAHF-260908A","note":"엑셀 이관: 9/8 16EA","createdBy":"excel-import"},{"id":"U00128","lotId":"L00126","product":"HF","date":"2026-08-27","type":"출하","qtyKg":2300.0,"ea":2.0,"customer":"","jnfamLot":"JAHF-260827A","note":"엑셀 이관: 8/27 2","createdBy":"excel-import"},{"id":"U00130","lotId":"L00129","product":"HF","date":"2026-08-12","type":"출하","qtyKg":16100.0,"ea":14.0,"customer":"ESF","jnfamLot":"","note":"엑셀 이관: 8/12 ESF 14","createdBy":"excel-import"},{"id":"U00131","lotId":"L00129","product":"HF","date":"2026-08-25","type":"출하","qtyKg":4600.0,"ea":4.0,"customer":"","jnfamLot":"JAHF-260825A","note":"엑셀 이관: 8/25 4","createdBy":"excel-import"},{"id":"U00133","lotId":"L00132","product":"HF","date":"2026-08-27","type":"출하","qtyKg":16100.0,"ea":14.0,"customer":"","jnfamLot":"JAHF-260827A","note":"엑셀 이관: 8/27 14","createdBy":"excel-import"},{"id":"U00134","lotId":"L00132","product":"HF","date":"2026-08-25","type":"출하","qtyKg":4600.0,"ea":4.0,"customer":"","jnfamLot":"JAHF-260825A","note":"엑셀 이관: 8/25 4","createdBy":"excel-import"},{"id":"U00136","lotId":"L00135","product":"HF","date":"2026-08-18","type":"출하","qtyKg":11500.0,"ea":10.0,"customer":"","jnfamLot":"JAHF-260818A","note":"엑셀 이관: 8/18 10","createdBy":"excel-import"},{"id":"U00137","lotId":"L00135","product":"HF","date":"2026-08-25","type":"출하","qtyKg":9200.0,"ea":8.0,"customer":"","jnfamLot":"JAHF-260825A","note":"엑셀 이관: 8/25 8","createdBy":"excel-import"},{"id":"U00139","lotId":"L00138","product":"HF","date":"2026-08-25","type":"출하","qtyKg":11500.0,"ea":10.0,"customer":"PVJC","jnfamLot":"","note":"엑셀 이관: PVJC 8/25 10","createdBy":"excel-import"},{"id":"U00140","lotId":"L00138","product":"HF","date":"2026-09-03","type":"출하","qtyKg":9200.0,"ea":8.0,"customer":"PVJC","jnfamLot":"","note":"엑셀 이관: PVJC 9/3 8","createdBy":"excel-import"},{"id":"U00142","lotId":"L00141","product":"HF","date":"2026-09-03","type":"출하","qtyKg":13800.0,"ea":12.0,"customer":"PVJC","jnfamLot":"","note":"엑셀 이관: PVJC 9/3 12","createdBy":"excel-import"},{"id":"U00143","lotId":"L00141","product":"HF","date":"2026-09-18","type":"출하","qtyKg":6900.0,"ea":6.0,"customer":"PVJC","jnfamLot":"","note":"엑셀 이관: PVJC 9/18 6","createdBy":"excel-import"},{"id":"U00145","lotId":"L00144","product":"HF","date":"2026-09-18","type":"출하","qtyKg":20700.0,"ea":18.0,"customer":"PVJC","jnfamLot":"","note":"엑셀 이관: PVJC 9/18 18","createdBy":"excel-import"},{"id":"U00147","lotId":"L00146","product":"HF","date":"2026-08-07","type":"이관(누적)","qtyKg":1150.0,"ea":null,"customer":"","jnfamLot":"PVJC IBC 1/ PVJC 10","note":"엑셀 이관 누적 사용량 / 기록: 뚜0, 10, 1, PVJC 9/25 10, PVJC 9/18 1, ④ 6, ⑥","createdBy":"excel-import"},{"id":"U00149","lotId":"L00148","product":"HF","date":"2026-09-14","type":"출하","qtyKg":18400.0,"ea":16.0,"customer":"","jnfamLot":"JAHF-260914A","note":"엑셀 이관: 9/14 16","createdBy":"excel-import"},{"id":"U00150","lotId":"L00148","product":"HF","date":"2026-09-17","type":"출하","qtyKg":2300.0,"ea":2.0,"customer":"","jnfamLot":"JAHF-260917A","note":"엑셀 이관: 9/17 2","createdBy":"excel-import"},{"id":"U00152","lotId":"L00151","product":"HF","date":"2026-08-10","type":"이관(누적)","qtyKg":13800.0,"ea":null,"customer":"","jnfamLot":"JAHF-260917A / JAHF-260921A","note":"엑셀 이관 누적 사용량 / 기록: 9/17 14, ① 4","createdBy":"excel-import"},{"id":"U00154","lotId":"L00153","product":"HF","date":"2026-08-11","type":"이관(누적)","qtyKg":13800.0,"ea":null,"customer":"","jnfamLot":"JAHF-260924A(6)","note":"엑셀 이관 누적 사용량 / 기록: 뚜0, ① 12, ② 6","createdBy":"excel-import"},{"id":"U00156","lotId":"L00155","product":"HF","date":"2026-08-11","type":"이관(누적)","qtyKg":18400.0,"ea":null,"customer":"","jnfamLot":"ESF IBC / JAHF-260924A(2)","note":"엑셀 이관 누적 사용량 / 기록: 뚜0, 2, ② 2","createdBy":"excel-import"},{"id":"U00161","lotId":"L00160","product":"HF","date":"2026-08-20","type":"이관(누적)","qtyKg":18400.0,"ea":null,"customer":"","jnfamLot":"ESF IBC","note":"엑셀 이관 누적 사용량 / 기록: JNF2026060903, 2, ⑥ 2, ②","createdBy":"excel-import"},{"id":"U00173","lotId":"L00172","product":"HNO3_65","date":"2024-10-02","type":"이관(누적)","qtyKg":18260.0,"ea":null,"customer":"","jnfamLot":"JAHN-250818A","note":"엑셀 이관 누적 사용량","createdBy":"excel-import"},{"id":"U00175","lotId":"L00174","product":"HNO3_65","date":"2025-07-29","type":"이관(누적)","qtyKg":9920.0,"ea":null,"customer":"","jnfamLot":"JAHN-250904A","note":"엑셀 이관 누적 사용량","createdBy":"excel-import"},{"id":"U00177","lotId":"L00176","product":"HNO3_65","date":"2025-07-29","type":"이관(누적)","qtyKg":9920.0,"ea":null,"customer":"","jnfamLot":"JAHN-250904A / JAHN-250924A","note":"엑셀 이관 누적 사용량","createdBy":"excel-import"},{"id":"U00179","lotId":"L00178","product":"HNO3_65","date":"2025-07-29","type":"이관(누적)","qtyKg":9920.0,"ea":null,"customer":"","jnfamLot":"JAHN-250924A","note":"엑셀 이관 누적 사용량","createdBy":"excel-import"},{"id":"U00181","lotId":"L00180","product":"HNO3_65","date":"2025-07-29","type":"이관(누적)","qtyKg":9920.0,"ea":null,"customer":"","jnfamLot":"JAHN-250924A / JAHN-260513B","note":"엑셀 이관 누적 사용량","createdBy":"excel-import"},{"id":"U00183","lotId":"L00182","product":"HNO3_65","date":"2025-07-30","type":"이관(누적)","qtyKg":9920.0,"ea":null,"customer":"","jnfamLot":"JAHN-260513B","note":"엑셀 이관 누적 사용량","createdBy":"excel-import"},{"id":"U00185","lotId":"L00184","product":"HNO3_65","date":"2025-07-30","type":"이관(누적)","qtyKg":9920.0,"ea":null,"customer":"","jnfamLot":"JAHN-260513B/ JAHN-260528A","note":"엑셀 이관 누적 사용량","createdBy":"excel-import"},{"id":"U00187","lotId":"L00186","product":"HNO3_65","date":"2025-08-06","type":"이관(누적)","qtyKg":9920.0,"ea":null,"customer":"","jnfamLot":"JAHN-260528A","note":"엑셀 이관 누적 사용량","createdBy":"excel-import"},{"id":"U00189","lotId":"L00188","product":"HNO3_65","date":"2025-08-06","type":"이관(누적)","qtyKg":9920.0,"ea":null,"customer":"","jnfamLot":"JAHN-260528A / JAHN-260904A","note":"엑셀 이관 누적 사용량 / 기록: 9/4 4","createdBy":"excel-import"},{"id":"U00191","lotId":"L00190","product":"HNO3_65","date":"2025-09-04","type":"출하","qtyKg":9920.0,"ea":8.0,"customer":"","jnfamLot":"","note":"엑셀 이관: 9/4 8","createdBy":"excel-import"},{"id":"U00193","lotId":"L00192","product":"HNO3_65","date":"2025-09-04","type":"출하","qtyKg":3720.0,"ea":3.0,"customer":"","jnfamLot":"","note":"엑셀 이관: 9/4 3","createdBy":"excel-import"},{"id":"U00194","lotId":"L00192","product":"HNO3_65","date":"2025-09-11","type":"출하","qtyKg":6200.0,"ea":5.0,"customer":"","jnfamLot":"","note":"엑셀 이관: 9/11 5","createdBy":"excel-import"},{"id":"U00197","lotId":"L00196","product":"HNO3_65","date":"2026-09-11","type":"출하","qtyKg":2480.0,"ea":2.0,"customer":"","jnfamLot":"JAHN-260911A","note":"엑셀 이관: 9/11 2","createdBy":"excel-import"},{"id":"U00199","lotId":"L00198","product":"HNO3_65","date":"2026-09-11","type":"출하","qtyKg":7440.0,"ea":6.0,"customer":"","jnfamLot":"JAHN-260911A","note":"엑셀 이관: 9/11 6","createdBy":"excel-import"},{"id":"U00201","lotId":"L00200","product":"HNO3_65","date":"2026-09-11","type":"출하","qtyKg":2480.0,"ea":2.0,"customer":"","jnfamLot":"JAHN-260911A","note":"엑셀 이관: 9/11 2","createdBy":"excel-import"},{"id":"U00204","lotId":"L00203","product":"HNO3_65","date":"2026-08-21","type":"출하","qtyKg":17360.0,"ea":14.0,"customer":"","jnfamLot":"JAHN-260821A","note":"엑셀 이관: 8/21 14","createdBy":"excel-import"},{"id":"U00205","lotId":"L00203","product":"HNO3_65","date":"2026-08-31","type":"출하","qtyKg":2480.0,"ea":2.0,"customer":"","jnfamLot":"JAHN-260831A","note":"엑셀 이관: 8/31 2","createdBy":"excel-import"},{"id":"U00207","lotId":"L00206","product":"HNO3_65","date":"2026-08-12","type":"출하","qtyKg":18600.0,"ea":15.0,"customer":"","jnfamLot":"JAHN-260812A","note":"엑셀 이관: 8/12 15","createdBy":"excel-import"},{"id":"U00208","lotId":"L00206","product":"HNO3_65","date":"2026-08-21","type":"출하","qtyKg":1240.0,"ea":1.0,"customer":"","jnfamLot":"JAHN-260821A","note":"엑셀 이관: 8/21 1","createdBy":"excel-import"},{"id":"U00210","lotId":"L00209","product":"HNO3_65","date":"2026-08-31","type":"출하","qtyKg":16120.0,"ea":13.0,"customer":"","jnfamLot":"JAHN-260831A","note":"엑셀 이관: 8/31 13","createdBy":"excel-import"},{"id":"U00211","lotId":"L00209","product":"HNO3_65","date":"2026-09-18","type":"출하","qtyKg":3720.0,"ea":3.0,"customer":"","jnfamLot":"JAHN-260918A","note":"엑셀 이관: 9/18 3","createdBy":"excel-import"},{"id":"U00213","lotId":"L00212","product":"HNO3_65","date":"2026-09-18","type":"출하","qtyKg":14880.0,"ea":12.0,"customer":"","jnfamLot":"JAHN-260918A","note":"엑셀 이관: 9/18 12물","createdBy":"excel-import"},{"id":"U00226","lotId":"L00225","product":"HCL","date":"2024-10-08","type":"이관(누적)","qtyKg":18540.0,"ea":null,"customer":"","jnfamLot":"JAHC-250814A","note":"엑셀 이관 누적 사용량","createdBy":"excel-import"},{"id":"U00228","lotId":"L00227","product":"HCL","date":"2025-02-23","type":"이관(누적)","qtyKg":16800.0,"ea":null,"customer":"","jnfamLot":"JAHC-250912A","note":"엑셀 이관 누적 사용량 / 기록: 4830","createdBy":"excel-import"},{"id":"U00230","lotId":"L00229","product":"HCL","date":"2025-08-05","type":"이관(누적)","qtyKg":33600.0,"ea":null,"customer":"","jnfamLot":"JAHC-250912A / JAHC-250926A/ ESF ((JAHC-260105A))","note":"엑셀 이관 누적 사용량","createdBy":"excel-import"},{"id":"U00232","lotId":"L00231","product":"HCL","date":"2025-08-06","type":"이관(누적)","qtyKg":33600.0,"ea":null,"customer":"","jnfamLot":"ESF(JAHC-260105A), Qcells IBC, JAHC-260511A","note":"엑셀 이관 누적 사용량 / 기록: 1/30 2100, 2/3 4200, 2/13 1050, 2/20 1050, 2/24 1050, 2/27 1050, 3/3 1050, 3/6 1050, 3/10 2100, 3/13 1050, 3/17 2100, 5/11 1890","createdBy":"excel-import"},{"id":"U00234","lotId":"L00233","product":"HCL","date":"2025-08-08","type":"이관(누적)","qtyKg":16800.0,"ea":null,"customer":"","jnfamLot":"JAHC-260511A","note":"엑셀 이관 누적 사용량 / 기록: 5/11 ISO","createdBy":"excel-import"},{"id":"U00236","lotId":"L00235","product":"HCL","date":"2025-09-03","type":"이관(누적)","qtyKg":33600.0,"ea":null,"customer":"","jnfamLot":"JAHC-260514A","note":"엑셀 이관 누적 사용량 / 기록: 5/14 iso 82, 6/3 78","createdBy":"excel-import"},{"id":"U00238","lotId":"L00237","product":"HCL","date":"2025-09-04","type":"이관(누적)","qtyKg":16800.0,"ea":null,"customer":"","jnfamLot":"JAHC-260626A / JAHC-260713A","note":"엑셀 이관 누적 사용량 / 기록: 6/3 7, 6/26 69, 7/13 4, 17760, 840","createdBy":"excel-import"},{"id":"U00240","lotId":"L00239","product":"HCL","date":"2026-03-24","type":"이관(누적)","qtyKg":19620.0,"ea":null,"customer":"","jnfamLot":"JAHC-260626A / JAHC-260713A","note":"엑셀 이관 누적 사용량 / 기록: 13, 4/20 2, PVJC, 6/26 3 Q, 7/13 13, 14170","createdBy":"excel-import"},{"id":"U00242","lotId":"L00241","product":"HCL","date":"2026-03-25","type":"이관(누적)","qtyKg":19620.0,"ea":null,"customer":"","jnfamLot":"JAHC-260713A / JAHC-260807A","note":"엑셀 이관 누적 사용량 / 기록: 3, 15, 7/13 3, 8/7 15, 3270","createdBy":"excel-import"},{"id":"U00244","lotId":"L00243","product":"HCL","date":"2026-08-07","type":"출하","qtyKg":2200.0,"ea":2.0,"customer":"","jnfamLot":"JAHC-260807A","note":"엑셀 이관: 8/7 2","createdBy":"excel-import"},{"id":"U00245","lotId":"L00243","product":"HCL","date":"2026-08-24","type":"출하","qtyKg":17600.0,"ea":16.0,"customer":"","jnfamLot":"JAHC-260824A","note":"엑셀 이관: 8/24 16","createdBy":"excel-import"},{"id":"U00247","lotId":"L00246","product":"HCL","date":"2026-08-24","type":"출하","qtyKg":1100.0,"ea":1.0,"customer":"","jnfamLot":"JAHC-260824A","note":"엑셀 이관: 8/24 1","createdBy":"excel-import"},{"id":"U00248","lotId":"L00246","product":"HCL","date":"2026-09-02","type":"출하","qtyKg":18700.0,"ea":17.0,"customer":"","jnfamLot":"JAHC-260902A","note":"엑셀 이관: 9/2 17","createdBy":"excel-import"},{"id":"U00258","lotId":"L00257","product":"HCL","date":"2026-08-23","type":"출하","qtyKg":2200.0,"ea":2.0,"customer":"PVJC","jnfamLot":"","note":"엑셀 이관: 8/23 PVJC 2","createdBy":"excel-import"},{"id":"U00270","lotId":"L00269","product":"HNO3_68","date":"2026-02-05","type":"출하","qtyKg":2480.0,"ea":null,"customer":"","jnfamLot":"","note":"엑셀 이관: 2/5 2480(E)","createdBy":"excel-import"},{"id":"U00275","lotId":"L00274","product":"H2SO4","date":"2026-04-27","type":"출하","qtyKg":1600.0,"ea":1.0,"customer":"","jnfamLot":"","note":"엑셀 이관: 4/27 1EA","createdBy":"excel-import"},{"id":"U90001","lotId":"L00146","product":"HF","date":"","type":"ISO충전","qtyKg":18400,"ea":16,"customer":"","jnfamLot":"","note":"엑셀 이관: ISO Tank 3 충전분 (충전 Lot은 FIFO 가정 — 실제와 다르면 ISO 탭에서 삭제 후 재등록)","createdBy":"excel-import","isoId":"I_T3"}],"isos":[{"id":"I_T3","product":"HF","tankNo":"ISO Tank 3","qtyKg":18400,"fillDate":"","status":"대기","customer":"","jnfamLot":"","note":"엑셀 이관 (HF 대기 ISO · Tank 3)","sourceUsageIds":["U90001"],"shipDate":""},{"id":"I00276","product":"HF","tankNo":"ISO Tank 4","qtyKg":18400,"fillDate":"","status":"대기","customer":"","jnfamLot":"","note":"엑셀 이관 (HF 대기 ISO · Tank 4)","sourceUsageIds":[]},{"id":"I00277","product":"HNO3_65","tankNo":"ISO","qtyKg":18600,"fillDate":"","status":"대기","customer":"","jnfamLot":"","note":"엑셀 이관 (65% HNO3 시트 대기 ISO 1)","sourceUsageIds":[]}]};
+</script>
+
+<script type="module">
+/* =====================================================================
+   JNFAM 재고 현황 시스템 (Inventory Status)
+   - Firestore (jnfam-ledger 프로젝트) : inv_products / inv_lots / inv_usage / inv_isos / inv_snapshots
+   - 수불부 연동 : inbound 컬렉션(invType 미착품·선적예정) 읽기 + 입고 등록 시 미착품→상품 전환
+   ===================================================================== */
+const FB_CFG = {
+  apiKey: "AIzaSyDB1-k-Xp98Sw3mx2AM3AxROo-Y4_4FZoY",
+  authDomain: "jnfam-ledger.firebaseapp.com",
+  projectId: "jnfam-ledger",
+  storageBucket: "jnfam-ledger.firebasestorage.app",
+  messagingSenderId: "656610691213",
+  appId: "1:656610691213:web:1d03f91bd8dd36b2283ac4"
+};
+const FB_URL='https://www.gstatic.com/firebasejs/10.12.2/';
+const COL={products:'inv_products',lots:'inv_lots',usage:'inv_usage',isos:'inv_isos',snaps:'inv_snapshots',ledger:'inbound'};
+const DEMO = new URLSearchParams(location.search).has('demo') || location.protocol==='file:';
+
+const state={products:[],lots:[],usage:[],isos:[],snaps:[],ledger:[],
+  view:'dashboard', prod:null, stockFilter:'stock', usageF:{prod:'',type:'',from:'',to:'',q:''}, isoF:'대기',
+  loaded:false, ledgerErr:null, invErr:null};
+let fb=null, AUM=null, auth=null, currentUser=null, unsubs=[], charts={};
+
+/* ---------------- 유틸 ---------------- */
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt=n=>(Math.round(+n||0)).toLocaleString('en-US');
+const fmt1=n=>(+n||0).toLocaleString('en-US',{maximumFractionDigits:1});
+const ton=n=>((+n||0)/1000).toLocaleString('en-US',{minimumFractionDigits:1,maximumFractionDigits:1});
+const pad=n=>String(n).padStart(2,'0');
+const dLocal=d=>d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
+const today=()=>dLocal(new Date());
+const dstr=v=>{ if(!v) return ''; if(typeof v==='string') return v.slice(0,10); if(v.toDate) return dLocal(v.toDate()); return ''; };
+const addDays=(s,n)=>{ const d=new Date(s+'T00:00:00'); d.setDate(d.getDate()+n); return dLocal(d); };
+const diffDays=(a,b)=>Math.round((new Date(a+'T00:00:00')-new Date(b+'T00:00:00'))/86400000);
+const uid=p=>p+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+const who=()=>currentUser?currentUser.email:(DEMO?'demo':'');
+function toast(m,ms=2800){ const t=$('toast'); t.textContent=m; t.style.display='block'; clearTimeout(t._h); t._h=setTimeout(()=>t.style.display='none',ms); }
+function openModal(html,wide){ $('modalBox').className='modal'+(wide?' wide':''); $('modalBox').innerHTML=html; $('modalBg').classList.add('open'); }
+function closeModal(){ $('modalBg').classList.remove('open'); }
+$('modalBg').addEventListener('mousedown',e=>{ if(e.target.id==='modalBg') closeModal(); });
+const dday=(d)=>{ if(!d) return ''; const n=diffDays(d,today()); if(n<0) return `<span class="d-late">D+${-n}</span>`; if(n===0) return `<span class="d-soon">D-Day</span>`; if(n<=7) return `<span class="d-soon">D-${n}</span>`; return `<span class="d-ok">D-${n}</span>`; };
+
+/* ---------------- 데이터 계층 ---------------- */
+async function dbSet(col,obj){
+  if(!obj.id) obj.id=uid(col.slice(4,6)||'x');
+  obj.updatedBy=who(); obj.updatedAt=new Date().toISOString();
+  if(!obj.createdBy){ obj.createdBy=who(); obj.createdAt=obj.updatedAt; }
+  if(fb) await fb.setDoc(fb.doc(fb.db,col,obj.id),obj);
+  else { const k=colKey(col); const i=state[k].findIndex(x=>x.id===obj.id); if(i>=0) state[k][i]=obj; else state[k].push(obj); render(); }
+}
+async function dbPatch(col,id,patch){
+  patch.updatedBy=who(); patch.updatedAt=new Date().toISOString();
+  if(fb) await fb.setDoc(fb.doc(fb.db,col,id),patch,{merge:true});
+  else { const k=colKey(col); const r=state[k].find(x=>x.id===id); if(r) Object.assign(r,patch); render(); }
+}
+async function dbDel(col,id){
+  if(fb) await fb.deleteDoc(fb.doc(fb.db,col,id));
+  else { const k=colKey(col); state[k]=state[k].filter(x=>x.id!==id); render(); }
+}
+async function dbBatch(ops){ // ops: [{t:'set'|'patch'|'del', col, id, data}]
+  if(!fb){ for(const o of ops){ if(o.t==='set') await dbSet(o.col,o.data); else if(o.t==='patch') await dbPatch(o.col,o.id,o.data); else await dbDel(o.col,o.id);} return; }
+  let b=fb.writeBatch(fb.db), n=0; const now=new Date().toISOString();
+  for(const o of ops){
+    const ref=fb.doc(fb.db,o.col,o.id||o.data.id);
+    if(o.t==='set'){ const d={...o.data,updatedBy:who(),updatedAt:now}; if(!d.createdBy){d.createdBy=who();d.createdAt=now;} b.set(ref,d); }
+    else if(o.t==='patch') b.set(ref,{...o.data,updatedBy:who(),updatedAt:now},{merge:true});
+    else b.delete(ref);
+    if(++n>=400){ await b.commit(); b=fb.writeBatch(fb.db); n=0; }
+  }
+  await b.commit();
+}
+const colKey=c=>({inv_products:'products',inv_lots:'lots',inv_usage:'usage',inv_isos:'isos',inv_snapshots:'snaps',inbound:'ledger'}[c]);
+
+/* ---------------- Firebase + Google 로그인 ---------------- */
+function setConn(kind,text,extra){
+  const C={ok:'#22c55e',wait:'#f59e0b',off:'#94a3b8',err:'#ef4444'};
+  $('connStatus').innerHTML='<span class="dot" style="background:'+(C[kind]||'#94a3b8')+'"></span>'+text+(extra||'');
+}
+function showLogin(msg){ $('loginGate').style.display='flex'; const m=$('loginMsg'); m.textContent=msg||''; m.classList.toggle('on',!!msg); $('loginAlt').style.display=msg?'inline-flex':'none'; }
+function hideLogin(){ $('loginGate').style.display='none'; }
+async function googleLogin(){
+  if(!auth){ toast('Firebase 초기화 전입니다'); return; }
+  try{ const p=new AUM.GoogleAuthProvider(); p.setCustomParameters({prompt:'select_account'}); await AUM.signInWithPopup(auth,p); }
+  catch(e){ if(e.code==='auth/popup-closed-by-user'||e.code==='auth/cancelled-popup-request') return; showLogin('로그인 실패: '+(e.code||e.message)); }
+}
+async function logout(){ if(auth){ try{ await AUM.signOut(auth); }catch(e){} } }
+function stopListeners(){ unsubs.forEach(u=>{try{u();}catch(e){}}); unsubs=[]; }
+
+function startListeners(fsM,db){
+  stopListeners();
+  fb={db,doc:fsM.doc,setDoc:fsM.setDoc,deleteDoc:fsM.deleteDoc,collection:fsM.collection,writeBatch:fsM.writeBatch,getDocs:fsM.getDocs};
+  const pending=new Set(['products','lots','usage','isos','snaps']);
+  setConn('wait','데이터 불러오는 중…');
+  const done=k=>{ pending.delete(k); if(!pending.size){ state.loaded=true; setConn('ok','Firebase 연결됨<br><span style="opacity:.75">'+esc(who())+'</span>','<div style="margin-top:6px"><a href="#" onclick="app.logout();return false">로그아웃</a></div>'); afterLoad(); } };
+  const onErr=(k)=>err=>{
+    if(err.code==='permission-denied'){
+      if(k==='ledger'){ state.ledgerErr='수불부(inbound) 읽기 권한이 없습니다'; render(); return; }
+      stopListeners(); fb=null;
+      setConn('err','접근 권한 없음');
+      state.invErr=true;
+      showLogin('이 계정('+who()+')은 재고 데이터 접근 권한이 없습니다.\n관리자에게 계정 등록 또는 Firestore 규칙(inv_*) 추가를 요청하세요.');
+    } else { setConn('err','Firestore 오류: '+err.code); toast('Firestore 오류: '+err.code); }
+  };
+  [['products',COL.products],['lots',COL.lots],['usage',COL.usage],['isos',COL.isos],['snaps',COL.snaps]].forEach(([k,c])=>{
+    unsubs.push(fsM.onSnapshot(fsM.collection(db,c),snap=>{ state[k]=snap.docs.map(d=>({id:d.id,...d.data()})); done(k); render(); },onErr(k)));
+  });
+  unsubs.push(fsM.onSnapshot(fsM.collection(db,COL.ledger),snap=>{ state.ledger=snap.docs.map(d=>({id:d.id,...d.data()})); state.ledgerErr=null; render(); },onErr('ledger')));
+}
+async function connectFirebase(){
+  try{
+    const [appM,fsM,auM]=await Promise.all([import(FB_URL+'firebase-app.js'),import(FB_URL+'firebase-firestore.js'),import(FB_URL+'firebase-auth.js')]);
+    const fapp=appM.initializeApp(FB_CFG); const db=fsM.getFirestore(fapp);
+    AUM=auM; auth=auM.getAuth(fapp);
+    auM.onAuthStateChanged(auth,user=>{
+      currentUser=user;
+      if(user){ hideLogin(); startListeners(fsM,db); }
+      else { stopListeners(); fb=null; Object.assign(state,{products:[],lots:[],usage:[],isos:[],snaps:[],ledger:[],loaded:false}); setConn('off','로그인 필요'); showLogin(''); render(); }
+    });
+  }catch(e){ setConn('err','Firebase 연결 실패'); toast('Firebase 연결 실패: '+e.message); console.error(e); }
+}
+
+/* 로그인 후 1회: 제품 마스터가 비어 있으면 기본값 생성, 오늘 스냅샷 저장 */
+let afterLoadDone=false;
+async function afterLoad(){
+  if(afterLoadDone) return; afterLoadDone=true;
+  if(!state.products.length && fb){ await dbBatch(SEED.products.map(p=>({t:'set',col:COL.products,data:{...p,id:p.key}}))); toast('기본 품목 마스터를 생성했습니다'); }
+  saveSnapshot();
+}
+async function saveSnapshot(){
+  if(!state.products.length) return;
+  const d=today(); const data={id:d,date:d,items:{}};
+  products().forEach(p=>{ const s=stockOf(p.key); data.items[p.key]={ibc:s.ibc,iso:s.iso,transit:s.transit,total:s.total}; });
+  const prev=state.snaps.find(x=>x.id===d);
+  if(prev && JSON.stringify(prev.items)===JSON.stringify(data.items)) return;
+  try{ await dbSet(COL.snaps,data); }catch(e){ console.warn('snapshot',e); }
+}
+
+/* ---------------- 계산 ---------------- */
+const products=()=>[...state.products].sort((a,b)=>(a.order??99)-(b.order??99));
+const P=k=>state.products.find(p=>p.key===k)||{key:k,name:k,ibcKg:1000,isoKg:18400,lotPrefix:'JA'};
+const pname=k=>P(k).name||k;
+function lotUsed(id){ return state.usage.filter(u=>u.lotId===id).reduce((s,u)=>s+(+u.qtyKg||0),0); }
+let _remCache=null;
+function remMap(){ if(_remCache) return _remCache; const m={}; state.usage.forEach(u=>{ if(u.lotId) m[u.lotId]=(m[u.lotId]||0)+(+u.qtyKg||0); }); _remCache=m; return m; }
+const lotRem=l=>Math.max(0,Math.round(((+l.qtyIn||0)-(remMap()[l.id]||0))*100)/100);
+const lotUsedC=l=>remMap()[l.id]||0;
+const lotEA=l=>{ const u=+l.unitKg||P(l.product).ibcKg||1; return lotRem(l)/u; };
+/* 수불부 inbound → 품목 매핑 */
+function ledgerProd(r){ const p=state.products.find(p=>p.ledgerItem===r.item && Math.abs((+p.ledgerPurity||0)-(+r.purity||0))<0.0001); return p?p.key:null; }
+const ledgerPending=()=>state.ledger.filter(r=>r.invType==='미착품'||r.invType==='선적예정(미인식)');
+const linkedLedgerIds=()=>new Set(state.lots.filter(l=>l.ledgerInboundId).map(l=>l.ledgerInboundId));
+function stockOf(k){
+  const lots=state.lots.filter(l=>l.product===k);
+  let ibc=0,hold=0,ea=0,cnt=0; lots.forEach(l=>{ const r=lotRem(l); if(r>0){ ibc+=r; cnt++; ea+=lotEA(l); if(l.hold) hold+=r; } });
+  const isoT=state.isos.filter(i=>i.product===k&&i.status==='대기');
+  const iso=isoT.reduce((s,i)=>s+(+i.qtyKg||0),0);
+  const tr=state.ledger.filter(r=>r.invType==='미착품'&&ledgerProd(r)===k);
+  const transit=tr.reduce((s,r)=>s+(+r.qty||0),0);
+  const pl=state.ledger.filter(r=>r.invType==='선적예정(미인식)'&&ledgerProd(r)===k);
+  const planned=pl.reduce((s,r)=>s+(+r.qty||0),0);
+  const from30=addDays(today(),-30);
+  const out30=state.usage.filter(u=>u.product===k&&u.type==='출하'&&dstr(u.date)>=from30&&dstr(u.date)<=today()).reduce((s,u)=>s+(+u.qtyKg||0),0)
+    + state.isos.filter(i=>i.product===k&&i.status==='출하완료'&&dstr(i.shipDate)>=from30&&dstr(i.shipDate)<=today()).reduce((s,i)=>s+(+i.qtyKg||0),0);
+  const onHand=ibc+iso;
+  const daily=out30/30; const cover=daily>0?onHand/daily:null;
+  return {ibc,hold,ea,cnt,iso,isoCnt:isoT.length,transit,trCnt:tr.length,planned,plCnt:pl.length,onHand,total:ibc+iso+transit,out30,cover};
+}
+function nextJnfamLot(k,date){
+  const pre=P(k).lotPrefix||'JA'; const ymd=(date||today()).slice(2).replace(/-/g,'');
+  const used=new Set(state.usage.filter(u=>u.product===k).map(u=>u.jnfamLot).concat(state.isos.map(i=>i.jnfamLot)).filter(Boolean));
+  for(const c of 'ABCDEFGH'){ const s=`${pre}-${ymd}${c}`; if(!used.has(s)) return s; }
+  return `${pre}-${ymd}A`;
+}
+
+/* ---------------- 렌더 ---------------- */
+function render(){
+  _remCache=null;
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.toggle('active',n.dataset.view===state.view));
+  const linked=linkedLedgerIds(); const nInc=ledgerPending().filter(r=>ledgerProd(r)).length;
+  const b=$('incBadge'); b.style.display=nInc?'inline':'none'; b.textContent=nInc;
+  if(!state.prod && state.products.length) state.prod=products()[0].key;
+  Object.values(charts).forEach(c=>{try{c.destroy();}catch(e){}}); charts={};
+  const v=state.view;
+  const main=$('main');
+  if(!DEMO && !currentUser){ main.innerHTML=''; return; }
+  if(!state.products.length){ main.innerHTML='<div class="empty">데이터 불러오는 중…</div>'; return; }
+  if(v==='dashboard') main.innerHTML=vDashboard();
+  else if(v==='stock') main.innerHTML=vStock();
+  else if(v==='usage') main.innerHTML=vUsage();
+  else if(v==='iso') main.innerHTML=vIso();
+  else if(v==='incoming') main.innerHTML=vIncoming();
+  else if(v==='settings') main.innerHTML=vSettings();
+  if(v==='dashboard') drawDashCharts();
+}
+document.querySelectorAll('.nav-item').forEach(n=>n.onclick=()=>{ state.view=n.dataset.view; document.querySelector('.sidebar').classList.remove('open'); render(); window.scrollTo(0,0); });
+function go(view,prod){ state.view=view; if(prod) state.prod=prod; render(); window.scrollTo(0,0); }
+
+const COLORS={ibc:'#2563eb',iso:'#7c3aed',transit:'#f59e0b',planned:'#cbd5e1'};
+
+/* ---------- 대시보드 ---------- */
+function vDashboard(){
+  const ps=products(); const S={}; ps.forEach(p=>S[p.key]=stockOf(p.key));
+  const tot=k=>ps.reduce((s,p)=>s+S[p.key][k],0);
+  const low=ps.filter(p=>+p.minStock>0 && S[p.key].onHand<+p.minStock);
+  const t=today();
+  const exp=state.lots.filter(l=>lotRem(l)>0&&l.shelfLife&&diffDays(l.shelfLife,t)<=60).sort((a,b)=>a.shelfLife.localeCompare(b.shelfLife));
+  const holds=state.lots.filter(l=>l.hold&&lotRem(l)>0);
+  const inc=ledgerPending().filter(r=>ledgerProd(r)).sort((a,b)=>(dstr(a.plantEta)||dstr(a.eta)||'9').localeCompare(dstr(b.plantEta)||dstr(b.eta)||'9'));
+  const recent=[...state.usage].filter(u=>u.createdBy!=='excel-import'||true).sort((a,b)=>(dstr(b.date)+(b.createdAt||'')).localeCompare(dstr(a.date)+(a.createdAt||''))).slice(0,10);
+  return `
+  <h2 class="page-title">재고 대시보드</h2>
+  <div class="page-sub">기준일 ${t} · 창고 재고 = IBC(Drum 포함) + ISO 대기 · 합계 = 창고 재고 + 운송중(수불부 미착품) ${state.ledgerErr?'<span class="tag warn">'+esc(state.ledgerErr)+'</span>':''} ${DEMO?'<span class="tag amber">DEMO 모드 (저장 안 됨)</span>':''}</div>
+  ${low.length?`<div class="banner red">⚠️ 최소 재고 미달: ${low.map(p=>`<b>${esc(p.name)}</b> (${ton(S[p.key].onHand)}t / 기준 ${ton(p.minStock)}t)`).join(', ')}</div>`:''}
+  <div class="cards">
+    <div class="kpi b-blue"><div class="k-label">창고 재고 (IBC+ISO)</div><div class="k-value">${ton(tot('onHand'))} t</div><div class="k-sub">IBC ${fmt(tot('ibc'))} kg (${fmt1(tot('ea'))} EA) · ISO ${fmt(tot('iso'))} kg</div></div>
+    <div class="kpi b-purple"><div class="k-label">ISO 대기</div><div class="k-value">${ton(tot('iso'))} t</div><div class="k-sub">${ps.reduce((s,p)=>s+S[p.key].isoCnt,0)} 탱크</div></div>
+    <div class="kpi b-amber"><div class="k-label">운송 중 (미착품)</div><div class="k-value">${ton(tot('transit'))} t</div><div class="k-sub">${ps.reduce((s,p)=>s+S[p.key].trCnt,0)}건 · 선적예정 ${ton(tot('planned'))} t 별도</div></div>
+    <div class="kpi b-green"><div class="k-label">합계 (창고+운송)</div><div class="k-value">${ton(tot('total'))} t</div><div class="k-sub">${fmt(tot('total'))} kg</div></div>
+    <div class="kpi b-red"><div class="k-label">유효기간 60일 이내 / Hold</div><div class="k-value">${exp.length} / ${holds.length}</div><div class="k-sub">잔량 있는 Lot 기준</div></div>
+  </div>
+  <div class="pcards">${ps.map(p=>pcard(p,S[p.key])).join('')}</div>
+  <div class="grid2">
+    <div class="panel"><h3>품목별 재고 구성 (톤)<span class="spacer"></span>
+      <span class="legend-inline"><span><i style="background:${COLORS.ibc}"></i>IBC</span><span><i style="background:${COLORS.iso}"></i>ISO</span><span><i style="background:${COLORS.transit}"></i>운송중</span></span></h3>
+      <div class="chart-wrap"><canvas id="cStack"></canvas></div></div>
+    <div class="panel"><h3>재고 추이 (창고+ISO, 톤)<span class="spacer"></span><span class="help">매일 첫 접속 시 자동 기록</span></h3>
+      <div class="chart-wrap"><canvas id="cTrend"></canvas></div></div>
+  </div>
+  <div class="panel"><h3>🚢 입고 예정 (수불부 연동)<span class="spacer"></span><button class="btn ghost sm" onclick="app.go('incoming')">전체 보기</button></h3>
+    ${incTable(inc.slice(0,8),true)}</div>
+  <div class="grid2e">
+    <div class="panel"><h3>⏳ 유효기간 임박·경과 Lot</h3><div class="tbl-scroll"><table><thead><tr><th>품목</th><th>Lot</th><th class="num">잔량(kg)</th><th>Shelf life</th><th></th></tr></thead><tbody>
+      ${exp.length?exp.map(l=>`<tr class="clickable" onclick="app.lotDetail('${l.id}')"><td>${esc(pname(l.product))}</td><td class="mono">${esc(l.sourceLot)}</td><td class="num">${fmt(lotRem(l))}</td><td>${l.shelfLife}</td><td>${dday(l.shelfLife)}</td></tr>`).join(''):'<tr><td colspan="5" class="empty">해당 없음</td></tr>'}
+    </tbody></table></div>
+    ${holds.length?`<h3 style="margin-top:16px">⛔ Hold Lot</h3><div class="tbl-scroll"><table><tbody>${holds.map(l=>`<tr class="clickable" onclick="app.lotDetail('${l.id}')"><td>${esc(pname(l.product))}</td><td class="mono">${esc(l.sourceLot)}</td><td class="num">${fmt(lotRem(l))} kg</td><td class="wrap">${esc(l.note)}</td></tr>`).join('')}</tbody></table></div>`:''}
+    </div>
+    <div class="panel"><h3>🕘 최근 출고·사용<span class="spacer"></span><button class="btn ghost sm" onclick="app.go('usage')">전체 보기</button></h3><div class="tbl-scroll"><table><thead><tr><th>일자</th><th>품목</th><th>구분</th><th class="num">수량(kg)</th><th>고객</th><th>JNFAM Lot</th></tr></thead><tbody>
+      ${recent.map(u=>`<tr><td>${dstr(u.date)}</td><td>${esc(pname(u.product))}</td><td>${typeTag(u.type)}</td><td class="num">${fmt(u.qtyKg)}</td><td>${esc(u.customer)}</td><td class="mono">${esc(u.jnfamLot)}</td></tr>`).join('')||'<tr><td colspan="6" class="empty">기록 없음</td></tr>'}
+    </tbody></table></div></div>
+  </div>`;
+}
+function pcard(p,s){
+  const tot=s.total||1; const w=x=>(x/tot*100).toFixed(1)+'%';
+  const low=+p.minStock>0&&s.onHand<+p.minStock;
+  return `<div class="pcard ${low?'low':''}" onclick="app.go('stock','${p.key}')">
+    <div class="pc-top"><span class="pc-name">${esc(p.name)}</span><span class="pc-code">${esc(p.code||'')}</span></div>
+    <div class="pc-label">창고 재고 (IBC+ISO)</div>
+    <div class="pc-total">${fmt(s.onHand)}<small>kg</small></div>
+    <div class="bar"><span style="width:${w(s.ibc)};background:${COLORS.ibc}"></span><span style="width:${w(s.iso)};background:${COLORS.iso}"></span><span style="width:${w(s.transit)};background:${COLORS.transit}"></span></div>
+    <div class="row"><span><i class="dotc" style="background:${COLORS.ibc}"></i>IBC</span><span class="v">${fmt(s.ibc)} kg · ${fmt1(s.ea)} EA</span></div>
+    <div class="row"><span><i class="dotc" style="background:${COLORS.iso}"></i>ISO 대기</span><span class="v">${fmt(s.iso)} kg · ${s.isoCnt}</span></div>
+    ${s.hold?`<div class="row"><span>└ Hold</span><span class="v" style="color:var(--red)">${fmt(s.hold)} kg</span></div>`:''}
+    <div class="row pc-sep"><span><i class="dotc" style="background:${COLORS.transit}"></i>운송중</span><span class="v">${fmt(s.transit)} kg · ${s.trCnt}건</span></div>
+    <div class="row pc-grand"><span>합계 (창고+운송)</span><span class="v">${fmt(s.total)} kg</span></div>
+    <div class="row pc-sep"><span>최근 30일 출하</span><span class="v">${fmt(s.out30)} kg${s.cover!=null?` · <span class="${s.cover<30?'d-late':s.cover<60?'d-soon':'d-ok'}">${Math.round(s.cover)}일분</span>`:''}</span></div>
+    ${+p.minStock>0?`<div class="row"><span>최소 재고</span><span class="v" style="color:${low?'var(--red)':'var(--sub)'}">${fmt(p.minStock)} kg</span></div>`:''}
+  </div>`;
+}
+function drawDashCharts(){
+  if(typeof Chart==='undefined') return;
+  const ps=products(); const S=ps.map(p=>stockOf(p.key));
+  const ctx=$('cStack'); if(ctx) charts.stack=new Chart(ctx,{type:'bar',data:{labels:ps.map(p=>p.name),datasets:[
+      {label:'IBC',data:S.map(s=>s.ibc/1000),backgroundColor:COLORS.ibc,stack:'a',borderRadius:3},
+      {label:'ISO 대기',data:S.map(s=>s.iso/1000),backgroundColor:COLORS.iso,stack:'a',borderRadius:3},
+      {label:'운송중',data:S.map(s=>s.transit/1000),backgroundColor:COLORS.transit,stack:'a',borderRadius:3}]},
+    options:{maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.dataset.label+': '+c.parsed.y.toFixed(1)+' t'}}},scales:{x:{grid:{display:false}},y:{beginAtZero:true,grid:{color:'#eef1f6'},title:{display:true,text:'ton'}}}}});
+  const snaps=[...state.snaps].sort((a,b)=>a.date.localeCompare(b.date)).slice(-90);
+  const tc=$('cTrend');
+  if(tc){
+    if(snaps.length<2){ tc.parentNode.innerHTML='<div class="empty">추이 데이터가 쌓이는 중입니다 (하루 1회 자동 기록 · 현재 '+snaps.length+'일)</div>'; return; }
+    const pal=['#2563eb','#db2777','#059669','#9333ea','#ea580c','#0891b2'];
+    charts.trend=new Chart(tc,{type:'line',data:{labels:snaps.map(s=>s.date.slice(5)),datasets:ps.map((p,i)=>({label:p.name,data:snaps.map(s=>s.items&&s.items[p.key]?((s.items[p.key].ibc||0)+(s.items[p.key].iso||0))/1000:null),borderColor:pal[i%pal.length],backgroundColor:pal[i%pal.length],tension:.25,pointRadius:snaps.length>30?0:2,borderWidth:2}))},
+      options:{maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{position:'bottom',labels:{boxWidth:10,font:{size:11}}}},scales:{x:{grid:{display:false}},y:{beginAtZero:true,grid:{color:'#eef1f6'}}}}});
+  }
+}
+const typeTag=t=>({'출하':'<span class="tag blue">출하</span>','ISO충전':'<span class="tag purple">ISO 충전</span>','반납':'<span class="tag ok">반납</span>','조정':'<span class="tag gray">조정</span>','이관(누적)':'<span class="tag gray">엑셀 이관</span>'}[t]||`<span class="tag gray">${esc(t)}</span>`);
+
+/* ---------- 품목별 재고 (Lot) ---------- */
+function vStock(){
+  const ps=products(); const k=state.prod; const p=P(k); const s=stockOf(k);
+  let lots=state.lots.filter(l=>l.product===k);
+  if(state.stockFilter==='stock') lots=lots.filter(l=>lotRem(l)>0);
+  else if(state.stockFilter==='done') lots=lots.filter(l=>lotRem(l)<=0);
+  lots.sort((a,b)=>(dstr(a.receivedDate)||'9').localeCompare(dstr(b.receivedDate)||'9')||(a.sourceLot||'').localeCompare(b.sourceLot||''));
+  const t=today();
+  return `
+  <h2 class="page-title">품목별 재고 (Lot)</h2>
+  <div class="page-sub">입고 Lot 단위 관리 · 현재고 = 입고수량 − 사용수량(출하·ISO 충전·반납 기록 합)</div>
+  <div class="ptabs">${ps.map(x=>`<div class="ptab ${x.key===k?'on':''}" onclick="app.setProd('${x.key}')">${esc(x.name)}<small>${ton(stockOf(x.key).onHand)}t</small></div>`).join('')}</div>
+  <div class="cards">
+    <div class="kpi b-blue"><div class="k-label">창고 재고 (IBC+ISO)</div><div class="k-value">${fmt(s.onHand)} kg</div><div class="k-sub">IBC ${fmt(s.ibc)} kg · ${fmt1(s.ea)} EA · ${s.cnt} Lot ${s.hold?'· Hold '+fmt(s.hold)+' kg':''}</div></div>
+    <div class="kpi b-purple"><div class="k-label">ISO 대기</div><div class="k-value">${fmt(s.iso)} kg</div><div class="k-sub">${s.isoCnt} 탱크 (1탱크 ${fmt(p.isoKg)} kg)</div></div>
+    <div class="kpi b-amber"><div class="k-label">운송 중 (미착품)</div><div class="k-value">${fmt(s.transit)} kg</div><div class="k-sub">${s.trCnt}건</div></div>
+    <div class="kpi b-green"><div class="k-label">합계</div><div class="k-value">${fmt(s.total)} kg</div><div class="k-sub">최근 30일 출하 ${fmt(s.out30)} kg</div></div>
+  </div>
+  <div class="panel">
+    <div class="toolbar">
+      <select class="w-auto" onchange="app.setStockFilter(this.value)">
+        ${[['stock','재고 있는 Lot'],['all','전체 Lot'],['done','소진 Lot']].map(([v,l])=>`<option value="${v}" ${state.stockFilter===v?'selected':''}>${l}</option>`).join('')}
+      </select>
+      <span class="help">${lots.length}건 · 행 클릭 시 사용 이력</span>
+      <span class="spacer"></span>
+      <button class="btn ghost" onclick="app.exportExcel()">⬇ 엑셀 내보내기</button>
+      <button class="btn ghost" onclick="app.lotModal()">＋ Lot 직접 입고</button>
+      <button class="btn primary" onclick="app.usageModal('${k}')">📤 출고·사용 등록</button>
+    </div>
+    <div class="tbl-scroll tall"><table><thead><tr>
+      <th>입고일</th><th>Lot # (Source)</th><th>JNFAM Lot (사용처)</th><th class="num">입고(kg)</th><th class="num">사용(kg)</th><th class="num">현재고(kg)</th><th class="num">EA</th><th>용기</th><th>위치</th><th>MFG</th><th>Shelf life</th><th>CoA</th><th>상태</th><th>비고</th><th></th>
+    </tr></thead><tbody>
+    ${lots.map(l=>{ const r=lotRem(l); const ex=l.shelfLife&&r>0?diffDays(l.shelfLife,t):null;
+      return `<tr class="clickable ${r<=0?'dim':''}" onclick="app.lotDetail('${l.id}')">
+      <td>${dstr(l.receivedDate)}${l.receivedDateEstimated?'<span title="엑셀 원본에 입고일 없음(위 행 기준 추정)" style="color:var(--amber)">*</span>':''}</td>
+      <td class="mono">${esc(l.sourceLot)}</td><td class="mono" style="max-width:240px;overflow:hidden;text-overflow:ellipsis" title="${esc(l.jnfamLots)}">${esc(l.jnfamLots)}</td>
+      <td class="num">${fmt(l.qtyIn)}</td><td class="num">${fmt(lotUsedC(l))}</td><td class="num"><b>${fmt(r)}</b></td><td class="num">${fmt1(lotEA(l))}</td>
+      <td>${esc(l.container)}</td><td>${esc(l.location)}</td><td>${dstr(l.mfgDate)}</td>
+      <td>${l.shelfLife||''} ${ex!=null&&ex<=60?`<span class="${ex<0?'d-late':'d-soon'}">(${ex<0?'경과':'D-'+ex})</span>`:''}</td>
+      <td>${l.coa?'<span class="tag ok">Y</span>':'<span class="tag gray">N</span>'}</td>
+      <td>${r<=0?'<span class="tag gray">소진</span>':l.hold?'<span class="tag warn">Hold</span>':'<span class="tag ok">사용가능</span>'}${l.ledgerInboundId?' <span class="tag amber" title="수불부 연동">수불부</span>':''}</td>
+      <td class="wrap">${esc(l.note)}</td>
+      <td onclick="event.stopPropagation()">${r>0?`<button class="btn primary sm" onclick="app.usageModal('${k}','${l.id}')">출고</button> `:''}<button class="btn ghost sm" onclick="app.lotModal('${l.id}')">수정</button></td></tr>`;}).join('')||'<tr><td colspan="15" class="empty">해당 Lot 없음</td></tr>'}
+    </tbody></table></div>
+  </div>`;
+}
+function lotDetail(id){
+  const l=state.lots.find(x=>x.id===id); if(!l) return;
+  const us=state.usage.filter(u=>u.lotId===id).sort((a,b)=>dstr(a.date).localeCompare(dstr(b.date)));
+  openModal(`<h3>${esc(pname(l.product))} · Lot ${esc(l.sourceLot)}</h3>
+  <div class="calc-box" style="margin-bottom:12px"><span>입고일 <b>${dstr(l.receivedDate)}</b></span><span>입고 <b>${fmt(l.qtyIn)} kg</b></span><span>사용 <b>${fmt(lotUsedC(l))} kg</b></span><span>현재고 <b>${fmt(lotRem(l))} kg (${fmt1(lotEA(l))} EA)</b></span><span>단위 <b>${fmt(l.unitKg)} kg/${esc(l.container)}</b></span>${l.invoice?`<span>Invoice <b class="mono">${esc(l.invoice)}</b></span>`:''}</div>
+  ${l.memo?`<div class="help" style="margin-bottom:10px">엑셀 메모: ${esc(l.memo)}</div>`:''}
+  <div class="tbl-scroll"><table><thead><tr><th>일자</th><th>구분</th><th class="num">EA</th><th class="num">수량(kg)</th><th>고객</th><th>JNFAM Lot</th><th>비고</th><th>등록</th><th></th></tr></thead><tbody>
+  ${us.map(u=>`<tr><td>${dstr(u.date)}</td><td>${typeTag(u.type)}</td><td class="num">${u.ea!=null?fmt1(u.ea):''}</td><td class="num">${fmt(u.qtyKg)}</td><td>${esc(u.customer)}</td><td class="mono">${esc(u.jnfamLot)}</td><td class="wrap">${esc(u.note)}</td><td class="help">${esc((u.createdBy||'').split('@')[0])}</td>
+    <td><button class="btn danger sm" onclick="app.delUsage('${u.id}','${id}')">삭제</button></td></tr>`).join('')||'<tr><td colspan="9" class="empty">사용 기록 없음</td></tr>'}
+  </tbody></table></div>
+  <div class="modal-actions">${lotRem(l)>0?`<button class="btn primary left" onclick="app.closeModal();app.usageModal('${l.product}','${id}')">📤 이 Lot 출고</button>`:''}
+    <button class="btn ghost" onclick="app.lotModal('${id}')">Lot 수정</button><button class="btn ghost" onclick="app.closeModal()">닫기</button></div>`,true);
+}
+function lotModal(id){
+  const l=id?state.lots.find(x=>x.id===id):{product:state.prod,receivedDate:today(),sourceLot:'',container:'IBC',unitKg:P(state.prod).ibcKg,qtyIn:'',location:'창고',mfgDate:'',shelfLife:'',coa:true,hold:false,note:'',jnfamLots:'',invoice:''};
+  const ps=products();
+  openModal(`<h3>${id?'Lot 수정':'Lot 직접 입고'}</h3>
+  ${!id?'<div class="banner blue" style="margin-bottom:12px">수불부 미착품으로 들어오는 물량은 [🚢 입고 예정] 탭에서 “입고 등록”을 사용하세요. 여기서는 수불부와 무관한 입고(샘플·반품 등)를 등록합니다.</div>':''}
+  <div class="form-grid">
+    <div class="fld"><label>품목</label><select id="l_product" onchange="document.getElementById('l_unit').value=app.P(this.value).ibcKg">${ps.map(p=>`<option value="${p.key}" ${p.key===l.product?'selected':''}>${esc(p.name)}</option>`).join('')}</select></div>
+    <div class="fld"><label>입고일</label><input type="date" id="l_date" value="${dstr(l.receivedDate)}"></div>
+    <div class="fld"><label>Lot # (From source)</label><input type="text" id="l_lot" value="${esc(l.sourceLot)}"></div>
+    <div class="fld"><label>보관용기</label><select id="l_cont">${['IBC','Drum','ISO','Tote'].map(o=>`<option ${o===l.container?'selected':''}>${o}</option>`).join('')}</select></div>
+    <div class="fld"><label>단위중량 (kg/EA)</label><input type="number" id="l_unit" value="${l.unitKg||''}" oninput="app.lotCalc()"></div>
+    <div class="fld"><label>수량 (EA)</label><input type="number" id="l_ea" value="${l.unitKg?+(l.qtyIn/l.unitKg).toFixed(2):''}" oninput="app.lotCalc()"></div>
+    <div class="fld"><label>입고수량 (kg)</label><input type="number" id="l_qty" value="${l.qtyIn}"></div>
+    <div class="fld"><label>보관위치</label><input type="text" id="l_loc" value="${esc(l.location)}"></div>
+    <div class="fld"><label>Invoice</label><input type="text" id="l_inv" value="${esc(l.invoice)}"></div>
+    <div class="fld"><label>MFG Date</label><input type="date" id="l_mfg" value="${dstr(l.mfgDate)}"></div>
+    <div class="fld"><label>Shelf life (유효기간)</label><input type="date" id="l_shelf" value="${dstr(l.shelfLife)}"><div class="help">비우면 입고일+364일 자동</div></div>
+    <div class="fld"><label>상태</label><div class="chk"><input type="checkbox" id="l_coa" ${l.coa?'checked':''}>CoA 수령</div><div class="chk"><input type="checkbox" id="l_hold" ${l.hold?'checked':''}>Hold (출고 보류)</div></div>
+    <div class="fld full"><label>JNFAM Lot (사용처 메모)</label><input type="text" id="l_jl" value="${esc(l.jnfamLots)}"></div>
+    <div class="fld full"><label>비고</label><input type="text" id="l_note" value="${esc(l.note)}"></div>
+  </div>
+  <div class="modal-actions">${id?`<button class="btn danger left" onclick="app.delLot('${id}')">Lot 삭제</button>`:''}
+    <button class="btn ghost" onclick="app.closeModal()">취소</button><button class="btn primary" onclick="app.saveLot('${id||''}')">저장</button></div>`);
+}
+function lotCalc(){ const u=+$('l_unit').value, e=+$('l_ea').value; if(u&&e) $('l_qty').value=Math.round(u*e*100)/100; }
+async function saveLot(id){
+  const old=id?state.lots.find(x=>x.id===id):{};
+  const rd=$('l_date').value; const qty=+$('l_qty').value;
+  if(!qty||qty<=0){ toast('입고수량을 입력하세요'); return; }
+  if(id && qty < lotUsedC(old)-0.01){ if(!confirm('입고수량이 이미 사용된 수량보다 작습니다. 계속할까요?')) return; }
+  const o={...old,id:id||undefined,product:$('l_product').value,receivedDate:rd,receivedDateEstimated:id?(old.receivedDateEstimated&&rd===old.receivedDate):false,sourceLot:$('l_lot').value.trim(),container:$('l_cont').value,
+    unitKg:+$('l_unit').value||0,qtyIn:qty,location:$('l_loc').value.trim()||'창고',invoice:$('l_inv').value.trim(),mfgDate:$('l_mfg').value,
+    shelfLife:$('l_shelf').value||(rd?addDays(rd,364):''),coa:$('l_coa').checked,hold:$('l_hold').checked,jnfamLots:$('l_jl').value.trim(),note:$('l_note').value.trim()};
+  if(!id){ delete o.id; }
+  await dbSet(COL.lots,o); closeModal(); toast('저장되었습니다');
+}
+async function delLot(id){
+  const us=state.usage.filter(u=>u.lotId===id);
+  if(!confirm(`이 Lot을 삭제할까요?${us.length?`\n연결된 사용 기록 ${us.length}건도 함께 삭제됩니다.`:''}`)) return;
+  await dbBatch([{t:'del',col:COL.lots,id},...us.map(u=>({t:'del',col:COL.usage,id:u.id}))]);
+  closeModal(); toast('삭제되었습니다');
+}
+
+/* ---------- 출고·사용 등록 (여러 Lot 동시) ---------- */
+let uRows=[];
+function usageModal(k,lotId){
+  k=k||state.prod; const p=P(k);
+  const avail=state.lots.filter(l=>l.product===k&&lotRem(l)>0).sort((a,b)=>(dstr(a.receivedDate)||'').localeCompare(dstr(b.receivedDate)||''));
+  uRows=lotId?[{lotId,ea:''}]:[{lotId:(avail.find(l=>!l.hold)||avail[0]||{}).id||'',ea:''}];
+  const d=today();
+  openModal(`<h3>📤 출고·사용 등록 — ${esc(p.name)}</h3>
+  <div class="form-grid">
+    <div class="fld"><label>품목</label><select id="u_prod" onchange="app.closeModal();app.usageModal(this.value)">${products().map(x=>`<option value="${x.key}" ${x.key===k?'selected':''}>${esc(x.name)}</option>`).join('')}</select></div>
+    <div class="fld"><label>일자</label><input type="date" id="u_date" value="${d}" onchange="app.suggestLot()"></div>
+    <div class="fld"><label>구분</label><select id="u_type" onchange="app.uTypeChange()">
+      <option value="출하">출하 (고객 출고)</option><option value="ISO충전">ISO 충전 (IBC→ISO 재포장)</option><option value="반납">반납 (재고 복귀)</option><option value="조정">재고 조정 (손실·샘플 등)</option></select></div>
+    <div class="fld"><label>고객</label><input type="text" id="u_cust" list="custList" placeholder="Qcells, PVJC, ESF…"><datalist id="custList">${[...new Set(state.usage.map(u=>u.customer).concat(state.isos.map(i=>i.customer)).filter(Boolean))].map(c=>`<option value="${esc(c)}">`).join('')}</datalist></div>
+    <div class="fld"><label>JNFAM Lot #</label><input type="text" id="u_jl" value="${nextJnfamLot(k,d)}"></div>
+    <div class="fld" id="u_isoBox" style="display:none"><label>ISO 탱크 번호</label><input type="text" id="u_tank" placeholder="예: ISO Tank 4"></div>
+    <div class="fld full"><label>비고</label><input type="text" id="u_note"></div>
+  </div>
+  <h3 style="margin:18px 0 8px;font-size:14px">사용 Lot (입고일 순 · FIFO 권장)</h3>
+  <table class="split-tbl"><thead><tr><th>Lot</th><th class="num">현재고</th><th style="width:110px">EA</th><th style="width:140px">kg</th><th></th></tr></thead><tbody id="u_rows"></tbody></table>
+  <div style="margin-top:8px"><button class="btn ghost sm" onclick="app.uAddRow()">＋ Lot 추가</button></div>
+  <div class="calc-box" style="margin-top:12px" id="u_sum"></div>
+  <div class="modal-actions"><button class="btn ghost" onclick="app.closeModal()">취소</button><button class="btn primary" onclick="app.saveUsage('${k}')">저장</button></div>`,true);
+  uRender();
+}
+function uAvail(k){ return state.lots.filter(l=>l.product===k&&(lotRem(l)>0||uRows.some(r=>r.lotId===l.id))).sort((a,b)=>(dstr(a.receivedDate)||'').localeCompare(dstr(b.receivedDate)||'')); }
+function uRender(){
+  const k=$('u_prod').value; const av=uAvail(k);
+  $('u_rows').innerHTML=uRows.map((r,i)=>{ const l=state.lots.find(x=>x.id===r.lotId); const u=l?(+l.unitKg||P(k).ibcKg):P(k).ibcKg;
+    return `<tr><td><select onchange="app.uSet(${i},'lotId',this.value)">${av.map(x=>`<option value="${x.id}" ${x.id===r.lotId?'selected':''}>${esc(x.sourceLot||'(no lot)')} · ${dstr(x.receivedDate)} · ${fmt1(lotEA(x))}EA${x.hold?' · HOLD':''}</option>`).join('')}</select></td>
+    <td class="num">${l?fmt(lotRem(l))+' kg':''}</td>
+    <td><input type="number" step="any" value="${r.ea}" oninput="app.uSet(${i},'ea',this.value)"></td>
+    <td><input type="number" step="any" value="${r.kg!=null?r.kg:(r.ea!==''?Math.round(r.ea*u*100)/100:'')}" oninput="app.uSet(${i},'kg',this.value)" id="u_kg${i}"></td>
+    <td>${uRows.length>1?`<button class="btn danger sm" onclick="app.uDel(${i})">✕</button>`:''}</td></tr>`; }).join('');
+  uSum();
+}
+function uSet(i,f,v){
+  const r=uRows[i];
+  if(f==='lotId'){ r.lotId=v; r.kg=null; uRender(); return; }
+  const l=state.lots.find(x=>x.id===r.lotId); const u=l?(+l.unitKg||P(l.product).ibcKg):1;
+  if(f==='ea'){ r.ea=v; r.kg=null; const el=$('u_kg'+i); if(el) el.value=v!==''?Math.round(+v*u*100)/100:''; }
+  if(f==='kg'){ r.kg=v===''?null:+v; }
+  uSum();
+}
+function uAddRow(){ const k=$('u_prod').value; const used=new Set(uRows.map(r=>r.lotId)); const nx=uAvail(k).find(l=>!used.has(l.id)&&!l.hold&&lotRem(l)>0); uRows.push({lotId:nx?nx.id:'',ea:''}); uRender(); }
+function uDel(i){ uRows.splice(i,1); uRender(); }
+function uKg(r){ const l=state.lots.find(x=>x.id===r.lotId); if(r.kg!=null&&r.kg!=='') return +r.kg; if(r.ea==='') return 0; return +r.ea*(l?(+l.unitKg||P(l.product).ibcKg):0); }
+function uSum(){
+  const typ=$('u_type').value; let tot=0, ea=0, over=[];
+  uRows.forEach(r=>{ const kg=uKg(r); tot+=kg; ea+=+r.ea||0; const l=state.lots.find(x=>x.id===r.lotId); if(l&&typ!=='반납'&&kg>lotRem(l)+0.01) over.push(l.sourceLot); });
+  const p=P($('u_prod').value);
+  $('u_sum').innerHTML=`<span>합계 <b>${fmt1(ea)} EA</b></span><span><b>${fmt(tot)} kg</b></span>${typ==='ISO충전'?`<span>ISO 1탱크 기준 ${fmt(p.isoKg)} kg → <b class="${Math.abs(tot-p.isoKg)<1?'good':'bad'}">${tot-p.isoKg>=0?'+':''}${fmt(tot-p.isoKg)} kg</b></span>`:''}${over.length?`<span class="bad">⚠ 현재고 초과: ${esc(over.join(', '))}</span>`:''}`;
+}
+function uTypeChange(){ $('u_isoBox').style.display=$('u_type').value==='ISO충전'?'block':'none'; uSum(); }
+function suggestLot(){ const k=$('u_prod').value; $('u_jl').value=nextJnfamLot(k,$('u_date').value); }
+async function saveUsage(k){
+  const typ=$('u_type').value, date=$('u_date').value, cust=$('u_cust').value.trim(), jl=$('u_jl').value.trim(), note=$('u_note').value.trim();
+  if(!date){ toast('일자를 입력하세요'); return; }
+  const rows=uRows.map(r=>({...r,kgv:uKg(r)})).filter(r=>r.lotId&&r.kgv>0);
+  if(!rows.length){ toast('수량을 입력하세요'); return; }
+  for(const r of rows){ const l=state.lots.find(x=>x.id===r.lotId); if(typ!=='반납'&&r.kgv>lotRem(l)+0.01&&!confirm(`Lot ${l.sourceLot}의 현재고(${fmt(lotRem(l))}kg)를 초과합니다. 그래도 저장할까요?`)) return; }
+  const ops=[]; const isoId=typ==='ISO충전'?uid('is'):null; const uids=[];
+  rows.forEach(r=>{ const id=uid('us'); uids.push(id);
+    ops.push({t:'set',col:COL.usage,data:{id,lotId:r.lotId,product:k,date,type:typ,qtyKg:typ==='반납'?-Math.abs(r.kgv):r.kgv,ea:r.ea!==''?+r.ea:null,customer:cust,jnfamLot:jl,note,isoId}}); });
+  if(isoId){ const tot=rows.reduce((s,r)=>s+r.kgv,0);
+    ops.push({t:'set',col:COL.isos,data:{id:isoId,product:k,tankNo:$('u_tank').value.trim(),qtyKg:tot,fillDate:date,status:'대기',customer:cust,jnfamLot:jl,note,sourceUsageIds:uids,shipDate:''}}); }
+  await dbBatch(ops); closeModal(); toast(typ==='ISO충전'?'ISO 충전 등록 — ISO 탱크(대기)가 생성되었습니다':'저장되었습니다');
+}
+async function delUsage(id,lotId){
+  const u=state.usage.find(x=>x.id===id); if(!u) return;
+  if(!confirm('이 사용 기록을 삭제할까요? (현재고가 복원됩니다)')) return;
+  const ops=[{t:'del',col:COL.usage,id}];
+  if(u.isoId){ const iso=state.isos.find(i=>i.id===u.isoId); if(iso){ const rest=(iso.sourceUsageIds||[]).filter(x=>x!==id);
+    if(!rest.length) ops.push({t:'del',col:COL.isos,id:iso.id}); else ops.push({t:'patch',col:COL.isos,id:iso.id,data:{sourceUsageIds:rest,qtyKg:(+iso.qtyKg||0)-(+u.qtyKg||0)}}); } }
+  await dbBatch(ops); toast('삭제되었습니다'); if(lotId) setTimeout(()=>lotDetail(lotId),300);
+}
+
+/* ---------- 출고·사용 기록 목록 ---------- */
+function vUsage(){
+  const f=state.usageF;
+  let us=state.usage.filter(u=>(!f.prod||u.product===f.prod)&&(!f.type||u.type===f.type)&&(!f.from||dstr(u.date)>=f.from)&&(!f.to||dstr(u.date)<=f.to));
+  if(f.q){ const q=f.q.toLowerCase(); us=us.filter(u=>{ const l=state.lots.find(x=>x.id===u.lotId)||{}; return [u.customer,u.jnfamLot,u.note,l.sourceLot].join(' ').toLowerCase().includes(q); }); }
+  us.sort((a,b)=>(dstr(b.date)+(b.createdAt||'')).localeCompare(dstr(a.date)+(a.createdAt||'')));
+  const sum=us.reduce((s,u)=>s+(+u.qtyKg||0),0);
+  const shown=us.slice(0,500);
+  return `<h2 class="page-title">출고·사용 기록</h2>
+  <div class="page-sub">IBC Lot에서 차감되는 모든 기록 (출하 / ISO 충전 / 반납 / 조정). ISO 탱크 출하는 [ISO 탱크] 탭에서 관리합니다.</div>
+  <div class="panel"><div class="toolbar">
+    <select class="w-auto" onchange="app.uf('prod',this.value)"><option value="">전체 품목</option>${products().map(p=>`<option value="${p.key}" ${f.prod===p.key?'selected':''}>${esc(p.name)}</option>`).join('')}</select>
+    <select class="w-auto" onchange="app.uf('type',this.value)"><option value="">전체 구분</option>${['출하','ISO충전','반납','조정','이관(누적)'].map(t=>`<option ${f.type===t?'selected':''}>${t}</option>`).join('')}</select>
+    <input type="date" class="w-auto" value="${f.from}" onchange="app.uf('from',this.value)"> ~ <input type="date" class="w-auto" value="${f.to}" onchange="app.uf('to',this.value)">
+    <input type="text" class="w-auto" placeholder="고객·Lot·비고 검색" value="${esc(f.q)}" onchange="app.uf('q',this.value)">
+    <span class="spacer"></span><button class="btn primary" onclick="app.usageModal(app.state.usageF.prod||app.state.prod)">📤 출고·사용 등록</button></div>
+  <div class="help" style="margin-bottom:8px">${us.length}건 · 합계 ${fmt(sum)} kg${us.length>500?' · 최근 500건만 표시':''}</div>
+  <div class="tbl-scroll tall"><table><thead><tr><th>일자</th><th>품목</th><th>구분</th><th>Source Lot</th><th class="num">EA</th><th class="num">수량(kg)</th><th>고객</th><th>JNFAM Lot</th><th>비고</th><th>등록자</th><th></th></tr></thead><tbody>
+  ${shown.map(u=>{ const l=state.lots.find(x=>x.id===u.lotId)||{}; return `<tr><td>${dstr(u.date)}</td><td>${esc(pname(u.product))}</td><td>${typeTag(u.type)}</td><td class="mono"><a href="#" onclick="app.lotDetail('${u.lotId}');return false">${esc(l.sourceLot||'')}</a></td><td class="num">${u.ea!=null?fmt1(u.ea):''}</td><td class="num">${fmt(u.qtyKg)}</td><td>${esc(u.customer)}</td><td class="mono">${esc(u.jnfamLot)}</td><td class="wrap">${esc(u.note)}</td><td class="help">${esc((u.createdBy||'').split('@')[0])}</td><td><button class="btn danger sm" onclick="app.delUsage('${u.id}')">삭제</button></td></tr>`; }).join('')||'<tr><td colspan="11" class="empty">기록 없음</td></tr>'}
+  </tbody></table></div></div>`;
+}
+
+/* ---------- ISO 탱크 ---------- */
+function vIso(){
+  const f=state.isoF;
+  const list=state.isos.filter(i=>!f||i.status===f).sort((a,b)=>(dstr(b.fillDate)||'').localeCompare(dstr(a.fillDate)||''));
+  const wait=state.isos.filter(i=>i.status==='대기');
+  return `<h2 class="page-title">ISO 탱크</h2>
+  <div class="page-sub">IBC → ISO 충전 시 자동 생성됩니다 (출고·사용 등록에서 구분 “ISO 충전”). 출하 시 “출하 처리”를 누르세요.</div>
+  <div class="cards">${products().map(p=>{ const w=wait.filter(i=>i.product===p.key); return w.length?`<div class="kpi b-purple"><div class="k-label">${esc(p.name)} ISO 대기</div><div class="k-value">${w.length} 탱크</div><div class="k-sub">${fmt(w.reduce((s,i)=>s+(+i.qtyKg||0),0))} kg</div></div>`:''; }).join('')||'<div class="kpi"><div class="k-label">ISO 대기</div><div class="k-value">0</div></div>'}</div>
+  <div class="panel"><div class="toolbar">
+    <select class="w-auto" onchange="app.setIsoF(this.value)">${[['대기','대기'],['출하완료','출하완료'],['','전체']].map(([v,l])=>`<option value="${v}" ${f===v?'selected':''}>${l}</option>`).join('')}</select>
+    <span class="spacer"></span><button class="btn ghost" onclick="app.isoModal()">＋ ISO 직접 등록</button></div>
+  <div class="tbl-scroll"><table><thead><tr><th>상태</th><th>품목</th><th>탱크</th><th>충전일</th><th class="num">수량(kg)</th><th>원료 Lot</th><th>JNFAM Lot</th><th>고객</th><th>출하일</th><th>비고</th><th></th></tr></thead><tbody>
+  ${list.map(i=>{ const src=(i.sourceUsageIds||[]).map(id=>{ const u=state.usage.find(x=>x.id===id); const l=u&&state.lots.find(x=>x.id===u.lotId); return l?`${l.sourceLot}(${fmt1(u.ea||u.qtyKg/(l.unitKg||1))})`:''; }).filter(Boolean).join(', ');
+    return `<tr><td>${i.status==='대기'?'<span class="tag purple">대기</span>':'<span class="tag gray">출하완료</span>'}</td><td>${esc(pname(i.product))}</td><td>${esc(i.tankNo)}</td><td>${dstr(i.fillDate)}</td><td class="num">${fmt(i.qtyKg)}</td><td class="mono wrap">${esc(src)}</td><td class="mono">${esc(i.jnfamLot)}</td><td>${esc(i.customer)}</td><td>${dstr(i.shipDate)}</td><td class="wrap">${esc(i.note)}</td>
+    <td>${i.status==='대기'?`<button class="btn green sm" onclick="app.isoShip('${i.id}')">출하 처리</button> `:''}<button class="btn ghost sm" onclick="app.isoModal('${i.id}')">수정</button></td></tr>`; }).join('')||'<tr><td colspan="11" class="empty">해당 ISO 없음</td></tr>'}
+  </tbody></table></div></div>`;
+}
+function isoModal(id){
+  const i=id?state.isos.find(x=>x.id===id):{product:state.prod,tankNo:'',qtyKg:P(state.prod).isoKg,fillDate:today(),status:'대기',customer:'',jnfamLot:'',note:'',shipDate:''};
+  openModal(`<h3>${id?'ISO 수정':'ISO 직접 등록'}</h3>
+  ${!id?'<div class="banner blue" style="margin-bottom:12px">IBC에서 옮겨 담는 경우엔 [출고·사용 등록 → ISO 충전]을 쓰세요 (IBC 재고가 자동 차감됩니다). 여기서는 ISO 상태로 직접 입고된 탱크만 등록합니다.</div>':''}
+  <div class="form-grid">
+    <div class="fld"><label>품목</label><select id="i_prod">${products().map(p=>`<option value="${p.key}" ${p.key===i.product?'selected':''}>${esc(p.name)}</option>`).join('')}</select></div>
+    <div class="fld"><label>탱크 번호</label><input type="text" id="i_tank" value="${esc(i.tankNo)}"></div>
+    <div class="fld"><label>수량(kg)</label><input type="number" id="i_qty" value="${i.qtyKg}" ${i.sourceUsageIds&&i.sourceUsageIds.length?'disabled title="IBC 충전 기록에서 계산됨"':''}></div>
+    <div class="fld"><label>충전일</label><input type="date" id="i_fill" value="${dstr(i.fillDate)}"></div>
+    <div class="fld"><label>상태</label><select id="i_status">${['대기','출하완료'].map(s=>`<option ${s===i.status?'selected':''}>${s}</option>`).join('')}</select></div>
+    <div class="fld"><label>출하일</label><input type="date" id="i_ship" value="${dstr(i.shipDate)}"></div>
+    <div class="fld"><label>고객</label><input type="text" id="i_cust" value="${esc(i.customer)}"></div>
+    <div class="fld"><label>JNFAM Lot</label><input type="text" id="i_jl" value="${esc(i.jnfamLot)}"></div>
+    <div class="fld"><label>비고</label><input type="text" id="i_note" value="${esc(i.note)}"></div>
+  </div>
+  <div class="modal-actions">${id?`<button class="btn danger left" onclick="app.delIso('${id}')">삭제</button>`:''}<button class="btn ghost" onclick="app.closeModal()">취소</button><button class="btn primary" onclick="app.saveIso('${id||''}')">저장</button></div>`);
+}
+async function saveIso(id){
+  const old=id?state.isos.find(x=>x.id===id):{sourceUsageIds:[]};
+  const o={...old,product:$('i_prod').value,tankNo:$('i_tank').value.trim(),qtyKg:$('i_qty').disabled?old.qtyKg:+$('i_qty').value,fillDate:$('i_fill').value,status:$('i_status').value,shipDate:$('i_ship').value,customer:$('i_cust').value.trim(),jnfamLot:$('i_jl').value.trim(),note:$('i_note').value.trim()};
+  if(o.status==='출하완료'&&!o.shipDate) o.shipDate=today();
+  if(!id) delete o.id;
+  await dbSet(COL.isos,o); closeModal(); toast('저장되었습니다');
+}
+function isoShip(id){
+  const i=state.isos.find(x=>x.id===id);
+  openModal(`<h3>ISO 출하 처리 — ${esc(pname(i.product))} ${esc(i.tankNo)} (${fmt(i.qtyKg)} kg)</h3>
+  <div class="form-grid"><div class="fld"><label>출하일</label><input type="date" id="s_date" value="${today()}"></div>
+  <div class="fld"><label>고객</label><input type="text" id="s_cust" value="${esc(i.customer)}"></div>
+  <div class="fld"><label>JNFAM Lot</label><input type="text" id="s_jl" value="${esc(i.jnfamLot)}"></div></div>
+  <div class="modal-actions"><button class="btn ghost" onclick="app.closeModal()">취소</button><button class="btn green" onclick="app.doIsoShip('${id}')">출하 완료</button></div>`);
+}
+async function doIsoShip(id){ await dbPatch(COL.isos,id,{status:'출하완료',shipDate:$('s_date').value||today(),customer:$('s_cust').value.trim(),jnfamLot:$('s_jl').value.trim()}); closeModal(); toast('ISO 출하 처리되었습니다'); }
+async function delIso(id){
+  const i=state.isos.find(x=>x.id===id); const n=(i.sourceUsageIds||[]).length;
+  if(!confirm(n?`이 ISO를 삭제하면 연결된 IBC 충전 기록 ${n}건도 삭제되어 IBC 재고가 복원됩니다. 계속할까요?`:'이 ISO를 삭제할까요?')) return;
+  await dbBatch([{t:'del',col:COL.isos,id},...(i.sourceUsageIds||[]).map(u=>({t:'del',col:COL.usage,id:u}))]); closeModal(); toast('삭제되었습니다');
+}
+
+/* ---------- 입고 예정 (수불부 연동) ---------- */
+function incTable(rows,compact){
+  if(state.ledgerErr) return `<div class="empty">${esc(state.ledgerErr)} — Firestore 규칙에서 inbound 읽기 권한을 확인하세요</div>`;
+  const linked=linkedLedgerIds();
+  return `<div class="tbl-scroll"><table><thead><tr><th>구분</th><th>품목</th><th>INVOICE</th><th class="num">수량(kg)</th><th class="num">IBC(EA)</th><th>ETD</th><th>ETA(항구)</th><th>창고도착 예정</th><th>도착까지</th>${compact?'':'<th>비고</th>'}<th></th></tr></thead><tbody>
+  ${rows.map(r=>{ const k=ledgerProd(r); const p=P(k); const arr=dstr(r.plantEta)||dstr(r.eta);
+    return `<tr><td>${r.invType==='미착품'?'<span class="tag amber">미착품 · 운송중</span>':'<span class="tag gray">선적예정</span>'}</td><td>${k?esc(p.name):`<span class="tag warn">${esc(r.item)} ${(+r.purity*100).toFixed(0)}% 미매핑</span>`}</td>
+    <td class="mono">${esc(r.invoice)}</td><td class="num">${fmt(r.qty)}</td><td class="num">${k&&p.ibcKg?fmt1(r.qty/p.ibcKg):''}</td><td>${dstr(r.etd)}</td><td>${dstr(r.eta)}</td><td>${dstr(r.plantEta)}</td><td>${dday(arr)}</td>${compact?'':`<td class="wrap">${esc(r.note)}</td>`}
+    <td>${k&&!linked.has(r.id)&&r.invType==='미착품'?`<button class="btn green sm" onclick="app.receiveModal('${r.id}')">입고 등록</button>`:linked.has(r.id)?'<span class="tag ok">등록됨</span>':''}</td></tr>`; }).join('')||`<tr><td colspan="${compact?10:11}" class="empty">입고 예정 없음</td></tr>`}
+  </tbody></table></div>`;
+}
+function vIncoming(){
+  const inc=ledgerPending().sort((a,b)=>(dstr(a.plantEta)||dstr(a.eta)||'9').localeCompare(dstr(b.plantEta)||dstr(b.eta)||'9'));
+  const linked=linkedLedgerIds(); const from=addDays(today(),-45);
+  const recentGoods=state.ledger.filter(r=>r.invType==='상품'&&ledgerProd(r)&&!linked.has(r.id)&&dstr(r.plantEta)>=from).sort((a,b)=>dstr(b.plantEta).localeCompare(dstr(a.plantEta)));
+  const unm=[...new Set(state.ledger.filter(r=>!ledgerProd(r)).map(r=>r.item+' '+(+r.purity*100).toFixed(0)+'%'))];
+  return `<h2 class="page-title">입고 예정 <span style="font-size:13px;color:var(--sub);font-weight:400">· JNFAM 수불부 미착품 연동</span></h2>
+  <div class="page-sub">수불부의 <b>미착품(05·운송중)</b>과 <b>선적예정(00)</b>을 실시간으로 보여줍니다. 창고 도착 후 <b>입고 등록</b>을 누르면 Lot이 생성되고, 선택 시 수불부의 미착품도 상품(04)으로 전환됩니다.</div>
+  ${unm.length?`<div class="banner">⚠ 품목 매핑이 없는 수불부 품목: ${esc(unm.join(', '))} — [설정]에서 품목의 “수불부 품목/농도”를 지정하세요.</div>`:''}
+  <div class="panel"><h3>🚢 운송 중 · 선적 예정</h3>${incTable(inc,false)}</div>
+  <div class="panel"><h3>📥 수불부에서 이미 입고완료(상품) 처리됐지만 재고 Lot이 없는 건 <span class="help">(최근 45일)</span></h3>
+    <div class="help" style="margin-bottom:8px">수불부에서 먼저 “입고완료”를 누른 경우 여기서 Lot만 등록하면 됩니다. 엑셀에서 이관된 Lot과 중복이면 등록하지 마세요.</div>
+    ${recentGoods.length?`<div class="tbl-scroll"><table><thead><tr><th>품목</th><th>INVOICE</th><th class="num">수량(kg)</th><th>창고입고일</th><th></th></tr></thead><tbody>${recentGoods.map(r=>`<tr><td>${esc(pname(ledgerProd(r)))}</td><td class="mono">${esc(r.invoice)}</td><td class="num">${fmt(r.qty)}</td><td>${dstr(r.plantEta)}</td><td><button class="btn ghost sm" onclick="app.receiveModal('${r.id}')">Lot 등록</button></td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">없음</div>'}
+  </div>`;
+}
+let rvRows=[], rvLedgerId=null;
+function receiveModal(ledgerId){
+  const r=state.ledger.find(x=>x.id===ledgerId); if(!r) return; rvLedgerId=ledgerId; const k=ledgerProd(r); const p=P(k);
+  const perLot=(p.ibcKg||1)*18; const n=Math.max(1,Math.round((+r.qty||0)/perLot));
+  const base=Math.floor((+r.qty||0)/n);
+  rvRows=Array.from({length:n},(_,i)=>({lot:'',ea:+((i<n-1?base:(+r.qty-base*(n-1)))/(p.ibcKg||1)).toFixed(2),unit:p.ibcKg}));
+  const d=dstr(r.plantEta)||today();
+  openModal(`<h3>📥 입고 등록 — ${esc(p.name)} · ${esc(r.invoice||'')}</h3>
+  <div class="calc-box" style="margin-bottom:12px"><span>수불부 수량 <b>${fmt(r.qty)} kg</b></span><span>ETD <b>${dstr(r.etd)||'-'}</b></span><span>ETA <b>${dstr(r.eta)||'-'}</b></span><span>구분 <b>${esc(r.invType)}</b></span></div>
+  <div class="form-grid">
+    <div class="fld"><label>창고 입고일 *</label><input type="date" id="rv_date" value="${d}"></div>
+    <div class="fld"><label>MFG Date</label><input type="date" id="rv_mfg"></div>
+    <div class="fld"><label>Shelf life</label><input type="date" id="rv_shelf" placeholder="자동"><div class="help">비우면 입고일+364일</div></div>
+    <div class="fld"><label>보관위치</label><input type="text" id="rv_loc" value="창고"></div>
+    <div class="fld"><label>용기</label><select id="rv_cont"><option>IBC</option><option>Drum</option><option>ISO</option></select></div>
+    <div class="fld"><label>&nbsp;</label><div class="chk"><input type="checkbox" id="rv_coa">CoA 수령</div></div>
+    <div class="fld full"><label>비고</label><input type="text" id="rv_note"></div>
+  </div>
+  <h3 style="margin:18px 0 8px;font-size:14px">Lot 분할 (컨테이너/원료 Lot별)</h3>
+  <table class="split-tbl"><thead><tr><th>Lot # (From source) *</th><th style="width:110px">EA</th><th style="width:120px">kg/EA</th><th class="num" style="width:120px">kg</th><th></th></tr></thead><tbody id="rv_rows"></tbody></table>
+  <div style="margin-top:8px"><button class="btn ghost sm" onclick="app.rvAdd()">＋ Lot 추가</button></div>
+  <div class="calc-box" style="margin-top:12px" id="rv_sum"></div>
+  ${r.invType!=='상품'?`<div class="fld" style="margin-top:14px"><div class="chk" style="background:var(--amber-l);padding:10px 12px;border-radius:8px"><input type="checkbox" id="rv_conv" checked><span><b>수불부에도 입고완료 처리</b> — 미착품(05) → 상품(04) 전환, 창고입고일(Plant ETA)을 위 입고일로 기록</span></div></div>`:''}
+  <div class="modal-actions"><button class="btn ghost" onclick="app.closeModal()">취소</button><button class="btn green" onclick="app.doReceive('${ledgerId}')">✓ 입고 등록</button></div>`,true);
+  rvRender();
+}
+function rvRender(){
+  $('rv_rows').innerHTML=rvRows.map((x,i)=>`<tr><td><input type="text" value="${esc(x.lot)}" oninput="app.rvSet(${i},'lot',this.value)" placeholder="예: FT2672312"></td>
+    <td><input type="number" step="any" value="${x.ea}" oninput="app.rvSet(${i},'ea',this.value)"></td><td><input type="number" step="any" value="${x.unit}" oninput="app.rvSet(${i},'unit',this.value)"></td>
+    <td class="num" id="rv_kg${i}">${fmt(x.ea*x.unit)}</td><td>${rvRows.length>1?`<button class="btn danger sm" onclick="app.rvDel(${i})">✕</button>`:''}</td></tr>`).join('');
+  rvSum();
+}
+function rvSet(i,f,v){ rvRows[i][f]=f==='lot'?v:(+v||0); if(f!=='lot'){ $('rv_kg'+i).textContent=fmt(rvRows[i].ea*rvRows[i].unit); rvSum(); } }
+function rvAdd(){ const u=rvRows[0]?rvRows[0].unit:1; rvRows.push({lot:'',ea:0,unit:u}); rvRender(); }
+function rvDel(i){ rvRows.splice(i,1); rvRender(); }
+function rvSum(){ const el=$('rv_sum'); if(!el) return; const r=state.ledger.find(x=>x.id===rvLedgerId)||{qty:0};
+  const tot=rvRows.reduce((s,x)=>s+x.ea*x.unit,0); const diff=tot-(+r.qty||0);
+  el.innerHTML=`<span>Lot 합계 <b>${fmt(tot)} kg</b> (${fmt1(rvRows.reduce((s,x)=>s+x.ea,0))} EA)</span><span>수불부 대비 <b class="${Math.abs(diff)<1?'good':'bad'}">${diff>=0?'+':''}${fmt(diff)} kg</b></span>${Math.abs(diff)>=1?'<span class="help">차이가 있으면 실제 입고량 기준으로 저장됩니다 (수불부 수량은 변경하지 않음)</span>':''}`; }
+function ledgerCode(r,type){ const pre={'상품':'04','미착품':'05','선적예정(미인식)':'00'}[type]||'04';
+  const ab={HF:'HF',HNO3:'HN',HCl:'HCl',H2SO4:'H2S'}[r.item]||r.item; const sup=r.supplier==='JNF CO.,LTD.'?'JNF':(r.supplier||'').replace(/[^A-Za-z0-9]/g,'').slice(0,8);
+  return pre+ab+(r.pack||'')+sup+(Number(r.purity)*100).toFixed(2)+'%'; }
+async function doReceive(ledgerId){
+  const r=state.ledger.find(x=>x.id===ledgerId); const k=ledgerProd(r);
+  const d=$('rv_date').value; if(!d){ toast('창고 입고일을 입력하세요'); return; }
+  const rows=rvRows.filter(x=>x.ea*x.unit>0);
+  if(!rows.length){ toast('Lot 수량을 입력하세요'); return; }
+  if(rows.some(x=>!x.lot.trim())){ toast('모든 Lot 번호를 입력하세요'); return; }
+  const dup=rows.find(x=>state.lots.some(l=>l.product===k&&l.sourceLot===x.lot.trim()));
+  if(dup&&!confirm(`Lot ${dup.lot}은 이미 등록되어 있습니다. 그래도 등록할까요?`)) return;
+  const shelf=$('rv_shelf').value||addDays(d,364);
+  const ops=rows.map(x=>({t:'set',col:COL.lots,data:{id:uid('lo'),product:k,receivedDate:d,sourceLot:x.lot.trim(),container:$('rv_cont').value,unitKg:x.unit,qtyIn:Math.round(x.ea*x.unit*100)/100,
+    location:$('rv_loc').value.trim()||'창고',mfgDate:$('rv_mfg').value,shelfLife:shelf,coa:$('rv_coa').checked,hold:false,note:$('rv_note').value.trim(),jnfamLots:'',invoice:(r.invoice||'').trim(),ledgerInboundId:r.id}}));
+  const conv=$('rv_conv')&&$('rv_conv').checked;
+  try{
+    await dbBatch(ops);
+    if(conv){
+      await dbPatch(COL.ledger,r.id,{invType:'상품',plantEta:d,convert:{prevCode:ledgerCode(r,r.invType),date:today(),note:'재고현황 시스템에서 입고 등록'},note:(r.note?r.note+' / ':'')+'미착품 전환 '+today()});
+    }
+    closeModal(); toast(`입고 등록 완료 (${rows.length} Lot)${conv?' · 수불부 상품 전환 완료':''}`);
+  }catch(e){ console.error(e); toast('저장 실패: '+(e.code||e.message),5000); }
+}
+
+/* ---------- 설정 ---------- */
+function vSettings(){
+  const ps=products();
+  const ledgerItems=[...new Set(state.ledger.map(r=>r.item+'|'+r.purity))];
+  return `<h2 class="page-title">설정</h2><div class="page-sub">품목 마스터 · 데이터 이관 · 내보내기</div>
+  <div class="panel"><h3>품목 마스터<span class="spacer"></span><button class="btn ghost sm" onclick="app.prodModal()">＋ 품목 추가</button></h3>
+  <div class="tbl-scroll"><table><thead><tr><th>순서</th><th>품목명</th><th>코드</th><th>수불부 품목 / 농도</th><th class="num">IBC 1EA(kg)</th><th class="num">ISO 1탱크(kg)</th><th class="num">최소 재고(kg)</th><th>JNFAM Lot 접두어</th><th></th></tr></thead><tbody>
+  ${ps.map(p=>`<tr><td>${p.order??''}</td><td><b>${esc(p.name)}</b> <span class="help">${esc(p.key)}</span></td><td>${esc(p.code)}</td><td>${esc(p.ledgerItem)} / ${p.ledgerPurity?(+p.ledgerPurity*100).toFixed(0)+'%':''}</td><td class="num">${fmt(p.ibcKg)}</td><td class="num">${fmt(p.isoKg)}</td><td class="num">${fmt(p.minStock)}</td><td class="mono">${esc(p.lotPrefix)}</td><td><button class="btn ghost sm" onclick="app.prodModal('${p.key}')">수정</button></td></tr>`).join('')}
+  </tbody></table></div>
+  <div class="help" style="margin-top:8px">수불부 품목/농도가 일치하는 미착품이 이 품목의 “운송중”으로 집계됩니다. 수불부에 있는 품목: ${esc(ledgerItems.map(x=>{const [a,b]=x.split('|');return a+' '+(+b*100).toFixed(0)+'%';}).join(', ')||'-')}</div></div>
+  <div class="grid2e">
+  <div class="panel"><h3>📥 엑셀 초기 데이터 이관</h3>
+    <div class="help">“JNFAM Inventory status” 엑셀(${SEED.lots.length} Lot · 사용기록 ${SEED.usage.length}건 · ISO 대기 ${SEED.isos.length}개)을 한 번만 불러옵니다.<br>
+    · 현재고는 엑셀과 동일하게 맞춰집니다 (품목별 창고 합계 검증 완료).<br>· 옆 칸의 사용 메모(예: “8/13 12”)는 가능한 경우 일자별 기록으로, 불가능하면 “엑셀 이관(누적)” 1건으로 들어갑니다.<br>· 운송 행은 가져오지 않습니다 — 수불부 미착품에서 자동 표시됩니다.</div>
+    <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" onclick="app.importSeed()">엑셀 데이터 가져오기</button>
+    ${state.lots.some(l=>l.createdBy==='excel-import')?`<button class="btn danger" onclick="app.removeSeed()">이관 데이터 삭제</button>`:''}</div></div>
+  <div class="panel"><h3>⬇ 내보내기</h3><div class="help">전체 Lot·사용 기록·ISO를 엑셀 파일로 저장합니다 (백업·보고용).</div><div style="margin-top:12px"><button class="btn ghost" onclick="app.exportExcel()">엑셀로 내보내기</button></div>
+    <h3 style="margin-top:18px">연결 정보</h3><div class="help">Firebase 프로젝트: <code>${FB_CFG.projectId}</code> (수불부와 공유)<br>컬렉션: <code>inv_products</code> <code>inv_lots</code> <code>inv_usage</code> <code>inv_isos</code> <code>inv_snapshots</code> · 수불부 <code>inbound</code><br>사용자: ${esc(who()||'-')}</div></div>
+  </div>`;
+}
+function prodModal(key){
+  const p=key?P(key):{key:'',name:'',code:'',ledgerItem:'',ledgerPurity:'',ibcKg:1150,isoKg:18400,minStock:0,lotPrefix:'JA',order:state.products.length};
+  openModal(`<h3>${key?'품목 수정':'품목 추가'}</h3><div class="form-grid">
+  <div class="fld"><label>키 (영문, 변경 불가)</label><input type="text" id="p_key" value="${esc(p.key)}" ${key?'disabled':''}></div>
+  <div class="fld"><label>품목명</label><input type="text" id="p_name" value="${esc(p.name)}"></div>
+  <div class="fld"><label>코드</label><input type="text" id="p_code" value="${esc(p.code)}"></div>
+  <div class="fld"><label>수불부 품목 (item)</label><input type="text" id="p_li" value="${esc(p.ledgerItem)}" placeholder="HF / HNO3 / HCl / H2SO4"></div>
+  <div class="fld"><label>수불부 농도 (0.49 형식)</label><input type="number" step="0.01" id="p_lp" value="${p.ledgerPurity}"></div>
+  <div class="fld"><label>JNFAM Lot 접두어</label><input type="text" id="p_pre" value="${esc(p.lotPrefix)}"></div>
+  <div class="fld"><label>IBC 1EA (kg)</label><input type="number" id="p_ibc" value="${p.ibcKg}"></div>
+  <div class="fld"><label>ISO 1탱크 (kg)</label><input type="number" id="p_iso" value="${p.isoKg}"></div>
+  <div class="fld"><label>최소 재고 (kg, 0=미사용)</label><input type="number" id="p_min" value="${p.minStock||0}"></div>
+  <div class="fld"><label>표시 순서</label><input type="number" id="p_ord" value="${p.order??0}"></div></div>
+  <div class="modal-actions"><button class="btn ghost" onclick="app.closeModal()">취소</button><button class="btn primary" onclick="app.saveProd('${key||''}')">저장</button></div>`);
+}
+async function saveProd(key){
+  const k=key||$('p_key').value.trim().toUpperCase().replace(/[^A-Z0-9_]/g,'');
+  if(!k){ toast('키를 입력하세요'); return; }
+  if(!key&&state.products.some(p=>p.key===k)){ toast('이미 있는 키입니다'); return; }
+  await dbSet(COL.products,{...(key?P(key):{}),id:k,key:k,name:$('p_name').value.trim()||k,code:$('p_code').value.trim(),ledgerItem:$('p_li').value.trim(),ledgerPurity:+$('p_lp').value||0,
+    lotPrefix:$('p_pre').value.trim(),ibcKg:+$('p_ibc').value||0,isoKg:+$('p_iso').value||0,minStock:+$('p_min').value||0,order:+$('p_ord').value||0});
+  closeModal(); toast('저장되었습니다');
+}
+async function importSeed(){
+  if(state.lots.some(l=>l.createdBy==='excel-import')){ toast('이미 엑셀 데이터가 이관되어 있습니다'); return; }
+  if(!confirm(`엑셀 데이터 ${SEED.lots.length} Lot / ${SEED.usage.length} 사용기록 / ISO ${SEED.isos.length}개를 가져올까요?`)) return;
+  const ops=[];
+  SEED.lots.forEach(l=>ops.push({t:'set',col:COL.lots,data:{...l,createdBy:'excel-import'}}));
+  SEED.usage.forEach(u=>ops.push({t:'set',col:COL.usage,data:{...u,createdBy:'excel-import'}}));
+  SEED.isos.forEach(i=>ops.push({t:'set',col:COL.isos,data:{...i,createdBy:'excel-import'}}));
+  try{ await dbBatch(ops); toast('엑셀 데이터 이관 완료'); }catch(e){ toast('이관 실패: '+(e.code||e.message),5000); }
+}
+async function removeSeed(){
+  if(!confirm('엑셀에서 이관한 Lot·사용기록·ISO를 모두 삭제할까요? (직접 등록한 데이터는 유지)')) return;
+  const ids=new Set(state.lots.filter(l=>l.createdBy==='excel-import').map(l=>l.id));
+  const ops=[...state.lots.filter(l=>ids.has(l.id)).map(l=>({t:'del',col:COL.lots,id:l.id})),
+    ...state.usage.filter(u=>u.createdBy==='excel-import').map(u=>({t:'del',col:COL.usage,id:u.id})),
+    ...state.isos.filter(i=>i.createdBy==='excel-import').map(i=>({t:'del',col:COL.isos,id:i.id}))];
+  await dbBatch(ops); toast('삭제되었습니다');
+}
+function exportExcel(){
+  if(typeof XLSX==='undefined'){ toast('엑셀 라이브러리를 불러오지 못했습니다'); return; }
+  const wb=XLSX.utils.book_new();
+  const sum=products().map(p=>{ const s=stockOf(p.key); return {'품목':p.name,'창고 재고(IBC+ISO, kg)':s.onHand,'IBC(kg)':s.ibc,'IBC(EA)':+s.ea.toFixed(1),'Hold(kg)':s.hold,'ISO 대기(kg)':s.iso,'ISO 탱크':s.isoCnt,'운송중(kg)':s.transit,'합계(kg)':s.total,'최근30일 출하(kg)':s.out30}; });
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(sum),'요약 '+today());
+  products().forEach(p=>{
+    const rows=state.lots.filter(l=>l.product===p.key).sort((a,b)=>(dstr(a.receivedDate)||'').localeCompare(dstr(b.receivedDate)||'')).map(l=>({'입고일':dstr(l.receivedDate),'제품명':p.name,'Lot # (From source)':l.sourceLot,'Lot # JNFAM Product':l.jnfamLots,'입고수량(kg)':l.qtyIn,'보관용기':l.container,'현재고(kg)':lotRem(l),'사용수량(kg)':lotUsedC(l),'EA':+lotEA(l).toFixed(2),'보관위치':l.location,'MFG Date':dstr(l.mfgDate),'shelf life':l.shelfLife,'CoA':l.coa?'Y':'N','Hold':l.hold?'Y':'','Invoice':l.invoice,'비고':l.note}));
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows.length?rows:[{}]),p.name.replace(/[\\/?*\[\]:]/g,'').slice(0,31));
+  });
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(state.usage.map(u=>{ const l=state.lots.find(x=>x.id===u.lotId)||{}; return {'일자':dstr(u.date),'품목':pname(u.product),'구분':u.type,'Source Lot':l.sourceLot,'EA':u.ea,'수량(kg)':u.qtyKg,'고객':u.customer,'JNFAM Lot':u.jnfamLot,'비고':u.note,'등록자':u.createdBy}; })),'출고·사용');
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(state.isos.map(i=>({'상태':i.status,'품목':pname(i.product),'탱크':i.tankNo,'충전일':dstr(i.fillDate),'수량(kg)':i.qtyKg,'고객':i.customer,'JNFAM Lot':i.jnfamLot,'출하일':dstr(i.shipDate),'비고':i.note}))),'ISO');
+  XLSX.writeFile(wb,`JNFAM_Inventory_${today()}.xlsx`);
+}
+
+/* ---------- 전역 노출 & 시작 ---------- */
+window.app={state,P,go,render,googleLogin,logout,closeModal,lotDetail,lotModal,lotCalc,saveLot,delLot,usageModal,uSet,uAddRow,uDel,uTypeChange,suggestLot,saveUsage,delUsage,
+  isoModal,saveIso,isoShip,doIsoShip,delIso,receiveModal,rvSet,rvAdd,rvDel,doReceive,prodModal,saveProd,importSeed,removeSeed,exportExcel,
+  setProd:k=>{state.prod=k;render();}, setStockFilter:v=>{state.stockFilter=v;render();}, setIsoF:v=>{state.isoF=v;render();}, uf:(k,v)=>{state.usageF[k]=v;render();}};
+
+if(DEMO){
+  // 데모: 엑셀 데이터 + 샘플 미착품으로 화면 확인 (저장 안 됨)
+  state.products=SEED.products.map(p=>({...p,id:p.key}));
+  state.lots=JSON.parse(JSON.stringify(SEED.lots)); state.usage=JSON.parse(JSON.stringify(SEED.usage)); state.isos=JSON.parse(JSON.stringify(SEED.isos));
+  state.ledger=[
+    {id:'d1',invType:'미착품',item:'HF',purity:0.49,supplier:'JNF CO.,LTD.',pack:'IBC',etd:'2026-08-07',eta:'2026-09-19',plantEta:'2026-09-25',invoice:'JNF2026080702',qty:41400,note:''},
+    {id:'d2',invType:'미착품',item:'HF',purity:0.49,supplier:'JNF CO.,LTD.',pack:'IBC',etd:'2026-08-10',eta:'2026-09-24',plantEta:'2026-09-30',invoice:'JNF2026081002',qty:41400,note:''},
+    {id:'d3',invType:'미착품',item:'HNO3',purity:0.65,supplier:'JNF CO.,LTD.',pack:'IBC',etd:'2026-08-20',eta:'2026-10-02',plantEta:'2026-10-07',invoice:'JNF2026082003',qty:39680,note:''},
+    {id:'d4',invType:'미착품',item:'HCl',purity:0.35,supplier:'JNF CO.,LTD.',pack:'IBC',etd:'2026-08-19',eta:'2026-09-28',plantEta:'2026-10-02',invoice:'JNF2026081901',qty:59400,note:''},
+    {id:'d5',invType:'선적예정(미인식)',item:'HF',purity:0.49,supplier:'JNF CO.,LTD.',pack:'IBC',etd:'2026-10-05',eta:'',plantEta:'',invoice:'JNF2026091501',qty:41400,note:''}];
+  const s=[]; for(let i=14;i>=0;i--){ const d=addDays(today(),-i); s.push({id:d,date:d,items:{}}); }
+  state.snaps=s; state.loaded=true;
+  setConn('wait','DEMO 모드<br><span style="opacity:.75">저장되지 않음</span>');
+  products().forEach(p=>{ const st=stockOf(p.key); state.snaps.forEach((x,i)=>x.items[p.key]={ibc:st.ibc*(1+(14-i)*0.012),iso:st.iso,transit:st.transit}); });
+  render();
+} else {
+  setConn('wait','Firebase 연결 중…');
+  connectFirebase();
+}
+</script>
+</body>
+</html>
