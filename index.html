@@ -82,6 +82,7 @@ select,input[type=text],input[type=number],input[type=date],textarea{
   border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:13px;background:#fff;color:var(--txt);width:100%}
 select:focus,input:focus,textarea:focus{outline:2px solid #bfd3ff;border-color:var(--blue)}
 .w-auto{width:auto!important}
+.panel h3 .sel-sm{padding:5px 8px;font-size:12px;font-weight:500}
 .ptabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
 .ptab{padding:8px 14px;border-radius:8px;background:#fff;border:1px solid var(--line);cursor:pointer;font-size:13px;font-weight:600}
 .ptab.on{background:var(--blue);color:#fff;border-color:var(--blue)}
@@ -197,7 +198,7 @@ const DEMO = new URLSearchParams(location.search).has('demo') || location.protoc
 
 const state={products:[],lots:[],usage:[],isos:[],snaps:[],ledger:[],
   view:'dashboard', prod:null, stockFilter:'stock', usageF:{prod:'',type:'',from:'',to:'',q:''}, isoF:'대기',
-  loaded:false, ledgerErr:null, invErr:null};
+  loaded:false, ledgerErr:null, invErr:null, chartF:{prod:'',part:'',trend:''}};
 let fb=null, AUM=null, auth=null, currentUser=null, unsubs=[], charts={};
 
 /* ---------------- 유틸 ---------------- */
@@ -401,10 +402,12 @@ function vDashboard(){
   <div class="pcards">${ps.map(p=>pcard(p,S[p.key])).join('')}</div>
   <div class="grid2">
     <div class="panel"><h3>품목별 재고 구성 (톤)<span class="spacer"></span>
-      <span class="legend-inline"><span><i style="background:${COLORS.ibc}"></i>IBC</span><span><i style="background:${COLORS.iso}"></i>ISO</span><span><i style="background:${COLORS.transit}"></i>운송중</span></span></h3>
-      <div class="chart-wrap"><canvas id="cStack"></canvas></div></div>
-    <div class="panel"><h3>재고 추이 (창고+ISO, 톤)<span class="spacer"></span><span class="help">매일 첫 접속 시 자동 기록</span></h3>
-      <div class="chart-wrap"><canvas id="cTrend"></canvas></div></div>
+      <select class="w-auto sel-sm" onchange="app.setChartF('prod',this.value)"><option value="">전체 품목</option>${ps.map(p=>`<option value="${p.key}" ${state.chartF.prod===p.key?'selected':''}>${esc(p.name)}</option>`).join('')}</select>
+      <select class="w-auto sel-sm" onchange="app.setChartF('part',this.value)">${[['','전체 구성'],['ibc','IBC'],['iso','ISO 대기'],['onHand','창고 재고 (IBC+ISO)'],['transit','운송중']].map(([v,l])=>`<option value="${v}" ${state.chartF.part===v?'selected':''}>${l}</option>`).join('')}</select></h3>
+      <div class="chart-wrap" id="wStack"></div><div class="help" id="stackNote" style="margin-top:6px"></div></div>
+    <div class="panel"><h3>재고 추이 (창고+ISO, 톤)<span class="spacer"></span>
+      <select class="w-auto sel-sm" onchange="app.setChartF('trend',this.value)"><option value="">전체 품목</option>${ps.map(p=>`<option value="${p.key}" ${state.chartF.trend===p.key?'selected':''}>${esc(p.name)}</option>`).join('')}</select></h3>
+      <div class="chart-wrap" id="wTrend"></div><div class="help" style="margin-top:6px">매일 첫 접속 시 자동 기록</div></div>
   </div>
   <div class="panel"><h3>🚢 입고 예정 (수불부 연동)<span class="spacer"></span><button class="btn ghost sm" onclick="app.go('incoming')">전체 보기</button></h3>
     ${incTable(inc.slice(0,8),true)}</div>
@@ -437,21 +440,36 @@ function pcard(p,s){
   </div>`;
 }
 function drawDashCharts(){
+  ['stack','trend'].forEach(k=>{ if(charts[k]){ try{charts[k].destroy();}catch(e){} delete charts[k]; } });
   if(typeof Chart==='undefined') return;
-  const ps=products(); const S=ps.map(p=>stockOf(p.key));
-  const ctx=$('cStack'); if(ctx) charts.stack=new Chart(ctx,{type:'bar',data:{labels:ps.map(p=>p.name),datasets:[
-      {label:'IBC',data:S.map(s=>s.ibc/1000),backgroundColor:COLORS.ibc,stack:'a',borderRadius:3},
-      {label:'ISO 대기',data:S.map(s=>s.iso/1000),backgroundColor:COLORS.iso,stack:'a',borderRadius:3},
-      {label:'운송중',data:S.map(s=>s.transit/1000),backgroundColor:COLORS.transit,stack:'a',borderRadius:3}]},
-    options:{maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.dataset.label+': '+c.parsed.y.toFixed(1)+' t'}}},scales:{x:{grid:{display:false}},y:{beginAtZero:true,grid:{color:'#eef1f6'},title:{display:true,text:'ton'}}}}});
+  const F=state.chartF; const all=products(); const ps=F.prod?all.filter(p=>p.key===F.prod):all; const S=ps.map(p=>stockOf(p.key));
+  const PARTS=[['ibc','IBC',COLORS.ibc],['iso','ISO 대기',COLORS.iso],['transit','운송중',COLORS.transit]];
+  const t1=v=>(v/1000).toLocaleString('en-US',{maximumFractionDigits:1})+' t';
+  const ws=$('wStack');
+  if(ws){ ws.innerHTML='<canvas id="cStack"></canvas>'; const ctx=$('cStack'); let data, stacked=true;
+    if(F.part){ const lab={ibc:'IBC',iso:'ISO 대기',onHand:'창고 재고',transit:'운송중'}[F.part]; const col={ibc:COLORS.ibc,iso:COLORS.iso,onHand:'#1e40af',transit:COLORS.transit}[F.part];
+      data={labels:ps.map(p=>p.name),datasets:[{label:lab,data:S.map(s=>s[F.part]/1000),backgroundColor:col,borderRadius:4,maxBarThickness:70}]}; stacked=false; }
+    else if(F.prod){ data={labels:PARTS.map(x=>x[1]),datasets:[{label:ps[0].name,data:PARTS.map(x=>S[0][x[0]]/1000),backgroundColor:PARTS.map(x=>x[2]),borderRadius:4,maxBarThickness:90}]}; stacked=false; }
+    else data={labels:ps.map(p=>p.name),datasets:PARTS.map(x=>({label:x[1],data:S.map(s=>s[x[0]]/1000),backgroundColor:x[2],stack:'a',borderRadius:3}))};
+    charts.stack=new Chart(ctx,{type:'bar',data,options:{maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>(c.dataset.label||'')+': '+c.parsed.y.toFixed(1)+' t'}}},
+      scales:{x:{stacked,grid:{display:false}},y:{stacked,beginAtZero:true,grid:{color:'#eef1f6'},title:{display:true,text:'ton'}}}}});
+    const note=$('stackNote'); if(note){ if(F.prod&&!F.part){ const s=S[0]; note.innerHTML=`<b>${esc(ps[0].name)}</b> · 창고 재고 <b>${t1(s.onHand)}</b> (IBC ${t1(s.ibc)} + ISO ${t1(s.iso)}) · 운송중 ${t1(s.transit)} · 합계 ${t1(s.total)}`; }
+      else if(F.part){ const tot=S.reduce((a,s)=>a+s[F.part],0); note.innerHTML=`합계 <b>${t1(tot)}</b>`; } else note.innerHTML=''; } }
+  const wt=$('wTrend'); if(!wt) return;
   const snaps=[...state.snaps].sort((a,b)=>a.date.localeCompare(b.date)).slice(-90);
-  const tc=$('cTrend');
-  if(tc){
-    if(snaps.length<2){ tc.parentNode.innerHTML='<div class="empty">추이 데이터가 쌓이는 중입니다 (하루 1회 자동 기록 · 현재 '+snaps.length+'일)</div>'; return; }
-    const pal=['#2563eb','#db2777','#059669','#9333ea','#ea580c','#0891b2'];
-    charts.trend=new Chart(tc,{type:'line',data:{labels:snaps.map(s=>s.date.slice(5)),datasets:ps.map((p,i)=>({label:p.name,data:snaps.map(s=>s.items&&s.items[p.key]?((s.items[p.key].ibc||0)+(s.items[p.key].iso||0))/1000:null),borderColor:pal[i%pal.length],backgroundColor:pal[i%pal.length],tension:.25,pointRadius:snaps.length>30?0:2,borderWidth:2}))},
-      options:{maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{position:'bottom',labels:{boxWidth:10,font:{size:11}}}},scales:{x:{grid:{display:false}},y:{beginAtZero:true,grid:{color:'#eef1f6'}}}}});
-  }
+  if(snaps.length<2){ wt.innerHTML='<div class="empty">추이 데이터가 쌓이는 중입니다 (하루 1회 자동 기록 · 현재 '+snaps.length+'일)</div>'; return; }
+  wt.innerHTML='<canvas id="cTrend"></canvas>';
+  const it=(s,k,f)=>s.items&&s.items[k]?(f(s.items[k]))/1000:null; let ds;
+  if(F.trend){ const k=F.trend;
+    ds=[{label:'창고 재고 (IBC+ISO)',data:snaps.map(s=>it(s,k,x=>(x.ibc||0)+(x.iso||0))),borderColor:'#1e40af',backgroundColor:'#1e40af',borderWidth:2.5},
+        {label:'IBC',data:snaps.map(s=>it(s,k,x=>x.ibc||0)),borderColor:COLORS.ibc,backgroundColor:COLORS.ibc,borderDash:[5,4],borderWidth:1.5},
+        {label:'ISO 대기',data:snaps.map(s=>it(s,k,x=>x.iso||0)),borderColor:COLORS.iso,backgroundColor:COLORS.iso,borderDash:[5,4],borderWidth:1.5},
+        {label:'운송중',data:snaps.map(s=>it(s,k,x=>x.transit||0)),borderColor:COLORS.transit,backgroundColor:COLORS.transit,borderDash:[2,3],borderWidth:1.5}];
+  } else { const pal=['#2563eb','#db2777','#059669','#9333ea','#ea580c','#0891b2'];
+    ds=all.map((p,i)=>({label:p.name,data:snaps.map(s=>it(s,p.key,x=>(x.ibc||0)+(x.iso||0))),borderColor:pal[i%pal.length],backgroundColor:pal[i%pal.length],borderWidth:2})); }
+  ds.forEach(d=>{d.tension=.25; d.pointRadius=snaps.length>30?0:2;});
+  charts.trend=new Chart($('cTrend'),{type:'line',data:{labels:snaps.map(s=>s.date.slice(5)),datasets:ds},
+    options:{maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{position:'bottom',labels:{boxWidth:10,font:{size:11}}},tooltip:{callbacks:{label:c=>c.dataset.label+': '+(c.parsed.y??0).toFixed(1)+' t'}}},scales:{x:{grid:{display:false}},y:{beginAtZero:true,grid:{color:'#eef1f6'}}}}});
 }
 const typeTag=t=>({'출하':'<span class="tag blue">출하</span>','ISO충전':'<span class="tag purple">ISO 충전</span>','반납':'<span class="tag ok">반납</span>','조정':'<span class="tag gray">조정</span>','이관(누적)':'<span class="tag gray">엑셀 이관</span>'}[t]||`<span class="tag gray">${esc(t)}</span>`);
 
@@ -876,7 +894,7 @@ function exportExcel(){
 /* ---------- 전역 노출 & 시작 ---------- */
 window.app={state,P,go,render,googleLogin,logout,closeModal,lotDetail,lotModal,lotCalc,saveLot,delLot,usageModal,uSet,uAddRow,uDel,uTypeChange,suggestLot,saveUsage,delUsage,
   isoModal,saveIso,isoShip,doIsoShip,delIso,receiveModal,rvSet,rvAdd,rvDel,doReceive,prodModal,saveProd,importSeed,removeSeed,exportExcel,
-  setProd:k=>{state.prod=k;render();}, setStockFilter:v=>{state.stockFilter=v;render();}, setIsoF:v=>{state.isoF=v;render();}, uf:(k,v)=>{state.usageF[k]=v;render();}};
+  setProd:k=>{state.prod=k;render();}, setChartF:(k,v)=>{state.chartF[k]=v;drawDashCharts();}, setStockFilter:v=>{state.stockFilter=v;render();}, setIsoF:v=>{state.isoF=v;render();}, uf:(k,v)=>{state.usageF[k]=v;render();}};
 
 if(DEMO){
   // 데모: 엑셀 데이터 + 샘플 미착품으로 화면 확인 (저장 안 됨)
