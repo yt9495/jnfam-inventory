@@ -129,6 +129,27 @@ select:focus,input:focus,textarea:focus{outline:2px solid #bfd3ff;border-color:v
 .tbl-scroll.tall{max-height:560px;overflow-y:auto}
 .toast{position:fixed;bottom:24px;right:24px;background:#101827;color:#fff;padding:12px 18px;border-radius:10px;font-size:13px;z-index:100;display:none;max-width:420px}
 .help{font-size:12px;color:var(--sub);line-height:1.7}
+/* 변경 이력 */
+.hist-panel{padding:14px 18px}
+.hist-list{list-style:none;margin:0;padding:0}
+.hist-list li{display:grid;grid-template-columns:118px 150px 120px 1fr;gap:10px;align-items:center;padding:7px 2px;border-top:1px solid var(--line);font-size:13px}
+.hist-list li:first-child{border-top:none}
+.hist-time{color:var(--sub);font-size:12px;white-space:nowrap}
+.hist-user{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hist-sum{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hist-sum .chg{color:var(--sub);font-size:12px;margin-left:6px}
+@media(max-width:900px){.hist-list li{grid-template-columns:1fr 1fr}.hist-sum{grid-column:1/-1;white-space:normal}}
+.tag.h-add{background:var(--blue-l);color:var(--blue)}
+.tag.h-upd{background:var(--slate-l);color:#475569}
+.tag.h-del{background:var(--red-l);color:var(--red)}
+.tag.h-cv{background:var(--green-l);color:var(--green)}
+.tag.h-out{background:var(--amber-l);color:var(--amber)}
+.tag.h-cfg{background:var(--purple-l);color:var(--purple)}
+.hist-detail td{background:#f8fafc;font-size:12px;color:var(--sub);padding:8px 14px}
+.hist-detail .d-row{display:inline-block;margin:2px 14px 2px 0}
+.hist-detail .d-row b{color:var(--txt)}
+.hist-detail del{color:var(--red)} .hist-detail ins{color:var(--green);text-decoration:none;font-weight:600}
+tr.hist-row{cursor:pointer} tr.hist-row:hover td{background:#f8fafc}
 .help code{background:#f1f5f9;padding:1px 5px;border-radius:4px;font-size:11.5px}
 .mono{font-family:Consolas,monospace;font-size:12px}
 .d-late{color:var(--red);font-weight:700} .d-soon{color:var(--amber);font-weight:700} .d-ok{color:var(--green);font-weight:600}
@@ -155,6 +176,7 @@ select:focus,input:focus,textarea:focus{outline:2px solid #bfd3ff;border-color:v
     <div class="nav-item" data-view="usage">📤 출고·사용 기록</div>
     <div class="nav-item" data-view="iso">🛢️ ISO 탱크</div>
     <div class="nav-item" data-view="incoming">🚢 입고 예정 <span class="badge" id="incBadge" style="display:none"></span></div>
+    <div class="nav-item" data-view="history">🕘 변경 이력</div>
     <div class="nav-item" data-view="settings">⚙️ 설정</div>
     <a class="nav-link" href="https://yt9495.github.io/jnfam-ledger/" target="_blank">↗ JNFAM 수불부 열기</a>
     <div class="conn" id="connStatus"><span class="dot" style="background:#94a3b8"></span>연결 준비 중…</div>
@@ -193,12 +215,13 @@ const FB_CFG = {
   appId: "1:656610691213:web:1d03f91bd8dd36b2283ac4"
 };
 const FB_URL='https://www.gstatic.com/firebasejs/10.12.2/';
-const COL={products:'inv_products',lots:'inv_lots',usage:'inv_usage',isos:'inv_isos',snaps:'inv_snapshots',ledger:'inbound'};
+const COL={products:'inv_products',lots:'inv_lots',usage:'inv_usage',isos:'inv_isos',snaps:'inv_snapshots',ledger:'inbound',hist:'inv_history',ledgerHist:'history'};
 const DEMO = new URLSearchParams(location.search).has('demo') || location.protocol==='file:';
 
 const state={products:[],lots:[],usage:[],isos:[],snaps:[],ledger:[],
   view:'dashboard', prod:null, stockFilter:'stock', usageF:{prod:'',type:'',from:'',to:'',q:''}, isoF:'대기',
-  loaded:false, ledgerErr:null, invErr:null, chartF:{prod:'',part:'',trend:''}};
+  loaded:false, ledgerErr:null, invErr:null, chartF:{prod:'',part:'',trend:''},
+  history:[], historyErr:'', histF:{user:'',action:'',q:'',from:'',to:''}, histOpen:null};
 let fb=null, AUM=null, auth=null, currentUser=null, unsubs=[], charts={};
 
 /* ---------------- 유틸 ---------------- */
@@ -252,6 +275,55 @@ async function dbBatch(ops){ // ops: [{t:'set'|'patch'|'del', col, id, data}]
 }
 const colKey=c=>({inv_products:'products',inv_lots:'lots',inv_usage:'usage',inv_isos:'isos',inv_snapshots:'snaps',inbound:'ledger'}[c]);
 
+/* ---------------- 변경 이력 (inv_history, 추가 전용) ---------------- */
+const FIELD_LABEL={product:'품목',receivedDate:'입고일',sourceLot:'Lot #',container:'용기',unitKg:'단위중량',qtyIn:'입고수량',location:'보관위치',invoice:'Invoice',
+  mfgDate:'MFG Date',shelfLife:'Shelf life',coa:'CoA',hold:'Hold',jnfamLots:'JNFAM Lot 메모',note:'비고',
+  tankNo:'탱크',qtyKg:'수량',fillDate:'충전일',status:'상태',shipDate:'출하일',customer:'고객',jnfamLot:'JNFAM Lot',
+  name:'품목명',code:'코드',ledgerItem:'수불부 품목',ledgerPurity:'수불부 농도',lotPrefix:'Lot 접두어',ibcKg:'IBC 1EA',isoKg:'ISO 1탱크',minStock:'최소 재고',order:'순서'};
+const SKIP_F=new Set(['id','key','updatedBy','updatedAt','createdBy','createdAt','receivedDateEstimated','sourceUsageIds','ledgerInboundId','isoId']);
+function hv(k,v){
+  if(v==null||v==='') return '(빈값)';
+  if(typeof v==='boolean') return v?'Y':'N';
+  if(k==='product') return pname(v);
+  if(k==='ledgerPurity') return (+v*100).toFixed(0)+'%';
+  if(typeof v==='number') return fmt1(v);
+  if(v&&v.toDate) return dstr(v);
+  return String(v);
+}
+function diffObj(a,b){
+  const out=[]; a=a||{};
+  Object.keys(b).forEach(k=>{
+    if(SKIP_F.has(k)) return;
+    const x=a[k], y=b[k];
+    if((x&&typeof x==='object'&&!x.toDate)||(y&&typeof y==='object'&&!y.toDate)) return;
+    const nx=(x==null?'':x), ny=(y==null?'':y);
+    if((typeof nx==='number'||typeof ny==='number') && nx!=='' && ny!==''){ if(Math.abs((+nx||0)-(+ny||0))<0.005) return; }
+    else if(String(typeof nx==='object'?dstr(nx):nx)===String(typeof ny==='object'?dstr(ny):ny)) return;
+    out.push({f:k,label:FIELD_LABEL[k]||k,from:hv(k,x),to:hv(k,y)});
+  });
+  return out;
+}
+function histEntry({action,kind,col,docId,summary,changes,product}){
+  const now=new Date();
+  return {id:uid('h'),tsMs:now.getTime(),ts:now.toISOString(),user:who()||'-',userName:currentUser?(currentUser.displayName||''):'',
+    action,kind:kind||'upd',col:col||'',docId:docId||'',product:product||'',summary:summary||'',changes:(changes||[]).slice(0,40)};
+}
+async function logHistory(e, colName){
+  try{
+    const h=histEntry(e);
+    if(fb) await fb.setDoc(fb.doc(fb.db,colName||COL.hist,h.id),h);
+    else if(!colName||colName===COL.hist){ state.history.unshift(h); render(); }
+  }catch(err){ console.warn('이력 기록 실패',err); }
+}
+const lotLabel=l=>`${pname(l.product)} · Lot ${l.sourceLot||'(no lot)'}`;
+const userShort=h=>h.userName||(h.user||'').split('@')[0]||'-';
+function relTime(ms){ const d=(Date.now()-ms)/1000;
+  if(d<60) return '방금 전'; if(d<3600) return Math.floor(d/60)+'분 전'; if(d<86400) return Math.floor(d/3600)+'시간 전'; if(d<604800) return Math.floor(d/86400)+'일 전';
+  return dLocal(new Date(ms)); }
+const absTime=ms=>{ const d=new Date(ms); return dLocal(d)+' '+pad(d.getHours())+':'+pad(d.getMinutes()); };
+const histTag=h=>`<span class="tag h-${h.kind||'upd'}">${esc(h.action)}</span>`;
+const chgText=(h,n)=>{ const c=h.changes||[]; if(!c.length) return ''; return c.slice(0,n).map(x=>`${x.label} ${x.from}→${x.to}`).join(', ')+(c.length>n?` 외 ${c.length-n}건`:''); };
+
 /* ---------------- Firebase + Google 로그인 ---------------- */
 function setConn(kind,text,extra){
   const C={ok:'#22c55e',wait:'#f59e0b',off:'#94a3b8',err:'#ef4444'};
@@ -286,6 +358,11 @@ function startListeners(fsM,db){
     unsubs.push(fsM.onSnapshot(fsM.collection(db,c),snap=>{ state[k]=snap.docs.map(d=>({id:d.id,...d.data()})); done(k); render(); },onErr(k)));
   });
   unsubs.push(fsM.onSnapshot(fsM.collection(db,COL.ledger),snap=>{ state.ledger=snap.docs.map(d=>({id:d.id,...d.data()})); state.ledgerErr=null; render(); },onErr('ledger')));
+  /* 변경 이력 — 실패해도 재고 데이터 연결에는 영향 없음 */
+  state.history=[]; state.historyErr='';
+  unsubs.push(fsM.onSnapshot(fsM.query(fsM.collection(db,COL.hist),fsM.orderBy('tsMs','desc'),fsM.limit(500)),snap=>{
+    state.history=snap.docs.map(d=>({id:d.id,...d.data()})); state.historyErr=''; render();
+  },err=>{ state.historyErr=err.code==='permission-denied'?'Firestore 보안 규칙에 inv_history 권한이 없습니다 (설정 탭 안내 참고)':'이력 불러오기 오류: '+err.code; console.warn('history',err); render(); }));
 }
 async function connectFirebase(){
   try{
@@ -295,7 +372,7 @@ async function connectFirebase(){
     auM.onAuthStateChanged(auth,user=>{
       currentUser=user;
       if(user){ hideLogin(); startListeners(fsM,db); }
-      else { stopListeners(); fb=null; Object.assign(state,{products:[],lots:[],usage:[],isos:[],snaps:[],ledger:[],loaded:false}); setConn('off','로그인 필요'); showLogin(''); render(); }
+      else { stopListeners(); fb=null; Object.assign(state,{products:[],lots:[],usage:[],isos:[],snaps:[],ledger:[],history:[],loaded:false}); setConn('off','로그인 필요'); showLogin(''); render(); }
     });
   }catch(e){ setConn('err','Firebase 연결 실패'); toast('Firebase 연결 실패: '+e.message); console.error(e); }
 }
@@ -371,6 +448,7 @@ function render(){
   else if(v==='iso') main.innerHTML=vIso();
   else if(v==='incoming') main.innerHTML=vIncoming();
   else if(v==='settings') main.innerHTML=vSettings();
+  else if(v==='history') main.innerHTML=vHistory();
   if(v==='dashboard') drawDashCharts();
 }
 document.querySelectorAll('.nav-item').forEach(n=>n.onclick=()=>{ state.view=n.dataset.view; document.querySelector('.sidebar').classList.remove('open'); render(); window.scrollTo(0,0); });
@@ -391,6 +469,7 @@ function vDashboard(){
   return `
   <h2 class="page-title">재고 대시보드</h2>
   <div class="page-sub">기준일 ${t} · 창고 재고 = IBC(Drum 포함) + ISO 대기 · 합계 = 창고 재고 + 운송중(수불부 미착품) ${state.ledgerErr?'<span class="tag warn">'+esc(state.ledgerErr)+'</span>':''} ${DEMO?'<span class="tag amber">DEMO 모드 (저장 안 됨)</span>':''}</div>
+  ${recentPanel()}
   ${low.length?`<div class="banner red">⚠️ 최소 재고 미달: ${low.map(p=>`<b>${esc(p.name)}</b> (${ton(S[p.key].onHand)}t / 기준 ${ton(p.minStock)}t)`).join(', ')}</div>`:''}
   <div class="cards">
     <div class="kpi b-blue"><div class="k-label">창고 재고 (IBC+ISO)</div><div class="k-value">${ton(tot('onHand'))} t</div><div class="k-sub">IBC ${fmt(tot('ibc'))} kg (${fmt1(tot('ea'))} EA) · ISO ${fmt(tot('iso'))} kg</div></div>
@@ -567,12 +646,16 @@ async function saveLot(id){
     shelfLife:$('l_shelf').value||(rd?addDays(rd,364):''),coa:$('l_coa').checked,hold:$('l_hold').checked,jnfamLots:$('l_jl').value.trim(),note:$('l_note').value.trim()};
   if(!id){ delete o.id; }
   await dbSet(COL.lots,o); closeModal(); toast('저장되었습니다');
+  if(id){ const ch=diffObj(old,o); if(ch.length) logHistory({action:'Lot 수정',kind:'upd',col:COL.lots,docId:id,product:o.product,summary:`${lotLabel(o)} · ${fmt(o.qtyIn)} kg`,changes:ch}); }
+  else logHistory({action:'Lot 직접 입고',kind:'add',col:COL.lots,docId:o.id,product:o.product,summary:`${lotLabel(o)} · ${fmt(o.qtyIn)} kg · ${dstr(o.receivedDate)}${o.invoice?' · '+o.invoice:''}`});
 }
 async function delLot(id){
   const us=state.usage.filter(u=>u.lotId===id);
   if(!confirm(`이 Lot을 삭제할까요?${us.length?`\n연결된 사용 기록 ${us.length}건도 함께 삭제됩니다.`:''}`)) return;
+  const lot=state.lots.find(x=>x.id===id)||{};
   await dbBatch([{t:'del',col:COL.lots,id},...us.map(u=>({t:'del',col:COL.usage,id:u.id}))]);
   closeModal(); toast('삭제되었습니다');
+  logHistory({action:'Lot 삭제',kind:'del',col:COL.lots,docId:id,product:lot.product,summary:`${lotLabel(lot)} · 입고 ${fmt(lot.qtyIn)} kg${us.length?` · 사용기록 ${us.length}건 함께 삭제`:''}`});
 }
 
 /* ---------- 출고·사용 등록 (여러 Lot 동시) ---------- */
@@ -641,7 +724,11 @@ async function saveUsage(k){
     ops.push({t:'set',col:COL.usage,data:{id,lotId:r.lotId,product:k,date,type:typ,qtyKg:typ==='반납'?-Math.abs(r.kgv):r.kgv,ea:r.ea!==''?+r.ea:null,customer:cust,jnfamLot:jl,note,isoId}}); });
   if(isoId){ const tot=rows.reduce((s,r)=>s+r.kgv,0);
     ops.push({t:'set',col:COL.isos,data:{id:isoId,product:k,tankNo:$('u_tank').value.trim(),qtyKg:tot,fillDate:date,status:'대기',customer:cust,jnfamLot:jl,note,sourceUsageIds:uids,shipDate:''}}); }
-  await dbBatch(ops); closeModal(); toast(typ==='ISO충전'?'ISO 충전 등록 — ISO 탱크(대기)가 생성되었습니다':'저장되었습니다');
+  await dbBatch(ops);
+  { const tot=rows.reduce((s,r)=>s+r.kgv,0); const lotsTxt=rows.map(r=>{ const l=state.lots.find(x=>x.id===r.lotId)||{}; return `${l.sourceLot||'?'}(${fmt(r.kgv)})`; }).join(', ');
+    logHistory({action:typ==='ISO충전'?'ISO 충전':typ==='출하'?'출하 등록':typ+' 등록',kind:'out',col:COL.usage,docId:uids[0],product:k,
+      summary:`${pname(k)} · ${fmt(tot)} kg${cust?' · '+cust:''}${jl?' · '+jl:''} · Lot ${lotsTxt}`}); }
+  closeModal(); toast(typ==='ISO충전'?'ISO 충전 등록 — ISO 탱크(대기)가 생성되었습니다':'저장되었습니다');
 }
 async function delUsage(id,lotId){
   const u=state.usage.find(x=>x.id===id); if(!u) return;
@@ -650,6 +737,8 @@ async function delUsage(id,lotId){
   if(u.isoId){ const iso=state.isos.find(i=>i.id===u.isoId); if(iso){ const rest=(iso.sourceUsageIds||[]).filter(x=>x!==id);
     if(!rest.length) ops.push({t:'del',col:COL.isos,id:iso.id}); else ops.push({t:'patch',col:COL.isos,id:iso.id,data:{sourceUsageIds:rest,qtyKg:(+iso.qtyKg||0)-(+u.qtyKg||0)}}); } }
   await dbBatch(ops); toast('삭제되었습니다'); if(lotId) setTimeout(()=>lotDetail(lotId),300);
+  { const l=state.lots.find(x=>x.id===u.lotId)||{};
+    logHistory({action:'사용기록 삭제',kind:'del',col:COL.usage,docId:id,product:u.product,summary:`${pname(u.product)} · ${u.type} ${fmt(u.qtyKg)} kg · ${dstr(u.date)} · Lot ${l.sourceLot||'?'}${u.customer?' · '+u.customer:''}`}); }
 }
 
 /* ---------- 출고·사용 기록 목록 ---------- */
@@ -714,6 +803,9 @@ async function saveIso(id){
   if(o.status==='출하완료'&&!o.shipDate) o.shipDate=today();
   if(!id) delete o.id;
   await dbSet(COL.isos,o); closeModal(); toast('저장되었습니다');
+  const isoSum=`${pname(o.product)} · ${o.tankNo||'ISO'} · ${fmt(o.qtyKg)} kg`;
+  if(id){ const ch=diffObj(old,o); if(ch.length) logHistory({action:'ISO 수정',kind:'upd',col:COL.isos,docId:id,product:o.product,summary:isoSum,changes:ch}); }
+  else logHistory({action:'ISO 직접 등록',kind:'add',col:COL.isos,docId:o.id,product:o.product,summary:isoSum});
 }
 function isoShip(id){
   const i=state.isos.find(x=>x.id===id);
@@ -723,11 +815,17 @@ function isoShip(id){
   <div class="fld"><label>JNFAM Lot</label><input type="text" id="s_jl" value="${esc(i.jnfamLot)}"></div></div>
   <div class="modal-actions"><button class="btn ghost" onclick="app.closeModal()">취소</button><button class="btn green" onclick="app.doIsoShip('${id}')">출하 완료</button></div>`);
 }
-async function doIsoShip(id){ await dbPatch(COL.isos,id,{status:'출하완료',shipDate:$('s_date').value||today(),customer:$('s_cust').value.trim(),jnfamLot:$('s_jl').value.trim()}); closeModal(); toast('ISO 출하 처리되었습니다'); }
+async function doIsoShip(id){
+  const i={...(state.isos.find(x=>x.id===id)||{})};
+  const patch={status:'출하완료',shipDate:$('s_date').value||today(),customer:$('s_cust').value.trim(),jnfamLot:$('s_jl').value.trim()};
+  await dbPatch(COL.isos,id,patch); closeModal(); toast('ISO 출하 처리되었습니다');
+  logHistory({action:'ISO 출하',kind:'out',col:COL.isos,docId:id,product:i.product,summary:`${pname(i.product)} · ${i.tankNo||'ISO'} · ${fmt(i.qtyKg)} kg → ${patch.customer||'-'} · ${patch.shipDate}`,changes:diffObj(i,patch)});
+}
 async function delIso(id){
   const i=state.isos.find(x=>x.id===id); const n=(i.sourceUsageIds||[]).length;
   if(!confirm(n?`이 ISO를 삭제하면 연결된 IBC 충전 기록 ${n}건도 삭제되어 IBC 재고가 복원됩니다. 계속할까요?`:'이 ISO를 삭제할까요?')) return;
   await dbBatch([{t:'del',col:COL.isos,id},...(i.sourceUsageIds||[]).map(u=>({t:'del',col:COL.usage,id:u}))]); closeModal(); toast('삭제되었습니다');
+  logHistory({action:'ISO 삭제',kind:'del',col:COL.isos,docId:id,product:i.product,summary:`${pname(i.product)} · ${i.tankNo||'ISO'} · ${fmt(i.qtyKg)} kg${n?` · 충전기록 ${n}건 함께 삭제(IBC 복원)`:''}`});
 }
 
 /* ---------- 입고 예정 (수불부 연동) ---------- */
@@ -814,7 +912,60 @@ async function doReceive(ledgerId){
       await dbPatch(COL.ledger,r.id,{invType:'상품',plantEta:d,convert:{prevCode:ledgerCode(r,r.invType),date:today(),note:'재고현황 시스템에서 입고 등록'},note:(r.note?r.note+' / ':'')+'미착품 전환 '+today()});
     }
     closeModal(); toast(`입고 등록 완료 (${rows.length} Lot)${conv?' · 수불부 상품 전환 완료':''}`);
+    const tot=rows.reduce((s,x)=>s+x.ea*x.unit,0);
+    logHistory({action:'입고 등록',kind:'add',col:COL.lots,docId:ops[0].data.id,product:k,
+      summary:`${pname(k)} · ${fmt(tot)} kg · ${rows.length} Lot (${rows.map(x=>x.lot.trim()).join(', ')}) · ${(r.invoice||'').trim()||'-'} · 입고일 ${d}${conv?' · 수불부 05→04 전환':''}`});
+    if(conv) logHistory({action:'입고완료(05→04)',kind:'cv',col:'inbound',docId:r.id,
+      summary:`${ledgerCode(r,'상품')} · ${fmt(r.qty)} kg${r.invoice?' · '+String(r.invoice).trim():''} (재고현황 시스템)`,
+      changes:[{f:'invType',label:'재고구분',from:r.invType,to:'상품'},{f:'plantEta',label:'창고입고일',from:dstr(r.plantEta)||'(빈값)',to:d}]}, COL.ledgerHist);
   }catch(e){ console.error(e); toast('저장 실패: '+(e.code||e.message),5000); }
+}
+
+/* ---------- 최근 업데이트 & 변경 이력 ---------- */
+function recentPanel(){
+  const list=state.history.slice(0,5);
+  return `<div class="panel hist-panel"><h3>🕘 최근 업데이트<span class="spacer"></span><button class="btn ghost sm" onclick="app.go('history')">전체 이력 보기</button></h3>
+  ${state.historyErr?`<div class="help" style="color:var(--red)">⚠️ ${esc(state.historyErr)}</div>`:
+    list.length?`<ul class="hist-list">${list.map(h=>`<li>
+      <span class="hist-time" title="${absTime(h.tsMs)}">${relTime(h.tsMs)} · ${absTime(h.tsMs).slice(5)}</span>
+      <span class="hist-user" title="${esc(h.user)}">👤 ${esc(userShort(h))}</span>
+      <span>${histTag(h)}</span>
+      <span class="hist-sum" title="${esc(h.summary)}${(h.changes||[]).length?' | '+esc(chgText(h,99)):''}">${esc(h.summary)}${(h.changes||[]).length?`<span class="chg">${esc(chgText(h,2))}</span>`:''}</span></li>`).join('')}</ul>`
+    :'<div class="help">아직 기록된 변경 이력이 없습니다. 이번 업데이트 이후의 등록·수정·삭제부터 기록됩니다.</div>'}</div>`;
+}
+function histRows(){
+  const f=state.histF;
+  return state.history.filter(h=>(!f.user||h.user===f.user)&&(!f.action||h.action===f.action)&&(!f.from||absTime(h.tsMs).slice(0,10)>=f.from)&&(!f.to||absTime(h.tsMs).slice(0,10)<=f.to)
+    &&(!f.q||[h.user,h.userName,h.action,h.summary,chgText(h,99)].join(' ').toLowerCase().includes(f.q.toLowerCase())));
+}
+function vHistory(){
+  const f=state.histF, rows=histRows(), hasF=f.user||f.action||f.q||f.from||f.to;
+  const opts=(vals,cur,all)=>`<option value="">${all}</option>`+[...new Set(vals.filter(Boolean))].sort().map(v=>`<option value="${esc(v)}" ${v===cur?'selected':''}>${esc(v)}</option>`).join('');
+  return `<h2 class="page-title">변경 이력</h2>
+  <div class="page-sub">누가 언제 무엇을 등록·수정·삭제했는지 기록합니다. 이력은 추가만 가능하며 수정·삭제되지 않습니다. (최근 500건)</div>
+  ${state.historyErr?`<div class="banner red">⚠️ ${esc(state.historyErr)}</div>`:''}
+  <div class="panel"><div class="toolbar">
+    <select class="w-auto" onchange="app.hf('user',this.value)">${opts(state.history.map(h=>h.user),f.user,'사용자 전체')}</select>
+    <select class="w-auto" onchange="app.hf('action',this.value)">${opts(state.history.map(h=>h.action),f.action,'작업 전체')}</select>
+    <input type="date" class="w-auto" value="${f.from}" onchange="app.hf('from',this.value)"> ~ <input type="date" class="w-auto" value="${f.to}" onchange="app.hf('to',this.value)">
+    <input type="text" class="w-auto" placeholder="Lot·고객·Invoice·내용 검색" value="${esc(f.q)}" onchange="app.hf('q',this.value)">
+    ${hasF?`<button class="btn ghost sm" onclick="app.hfReset()">초기화</button>`:''}
+    <span class="spacer"></span><button class="btn ghost" onclick="app.exportHistory()">⬇ 이력 엑셀</button></div>
+  <div class="help" style="margin-bottom:8px">${rows.length}건 · 행을 클릭하면 변경 상세(이전값 → 변경값)를 봅니다</div>
+  <div class="tbl-scroll tall"><table><thead><tr><th>일시</th><th>사용자</th><th>작업</th><th>대상</th><th>변경 내용</th></tr></thead><tbody>
+  ${rows.map(h=>{ const c=h.changes||[]; const open=state.histOpen===h.id;
+    return `<tr class="hist-row" onclick="app.toggleHist('${h.id}')"><td style="white-space:nowrap">${absTime(h.tsMs)}<div class="help">${relTime(h.tsMs)}</div></td>
+      <td style="white-space:nowrap"><b>${esc(userShort(h))}</b><div class="help">${esc(h.user)}</div></td><td>${histTag(h)}</td>
+      <td class="wrap">${esc(h.summary)}</td><td class="wrap">${c.length?esc(chgText(h,3)):'<span class="help">-</span>'}</td></tr>
+      ${open?`<tr class="hist-detail"><td colspan="5">${c.length?c.map(x=>`<span class="d-row"><b>${esc(x.label)}</b>: <del>${esc(x.from)}</del> → <ins>${esc(x.to)}</ins></span>`).join(''):'필드 단위 변경 내역 없음'}<div style="margin-top:4px">문서: <code>${esc(h.col)}/${esc(h.docId)}</code></div></td></tr>`:''}`; }).join('')
+    ||`<tr><td colspan="5" class="empty">${state.history.length?'조건에 맞는 이력이 없습니다':'기록된 이력이 없습니다'}</td></tr>`}
+  </tbody></table></div></div>`;
+}
+function exportHistory(){
+  if(typeof XLSX==='undefined'){ toast('엑셀 라이브러리를 불러오지 못했습니다'); return; }
+  const rows=histRows().map(h=>({'일시':absTime(h.tsMs),'사용자':h.userName||'','이메일':h.user,'작업':h.action,'대상':h.summary,'변경 내용':(h.changes||[]).map(x=>`${x.label}: ${x.from} → ${x.to}`).join('\n'),'문서':h.col+'/'+h.docId}));
+  const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows.length?rows:[{}]),'변경이력');
+  XLSX.writeFile(wb,`JNFAM_Inventory_변경이력_${today()}.xlsx`);
 }
 
 /* ---------- 설정 ---------- */
@@ -834,7 +985,7 @@ function vSettings(){
     <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" onclick="app.importSeed()">엑셀 데이터 가져오기</button>
     ${state.lots.some(l=>l.createdBy==='excel-import')?`<button class="btn danger" onclick="app.removeSeed()">이관 데이터 삭제</button>`:''}</div></div>
   <div class="panel"><h3>⬇ 내보내기</h3><div class="help">전체 Lot·사용 기록·ISO를 엑셀 파일로 저장합니다 (백업·보고용).</div><div style="margin-top:12px"><button class="btn ghost" onclick="app.exportExcel()">엑셀로 내보내기</button></div>
-    <h3 style="margin-top:18px">연결 정보</h3><div class="help">Firebase 프로젝트: <code>${FB_CFG.projectId}</code> (수불부와 공유)<br>컬렉션: <code>inv_products</code> <code>inv_lots</code> <code>inv_usage</code> <code>inv_isos</code> <code>inv_snapshots</code> · 수불부 <code>inbound</code><br>사용자: ${esc(who()||'-')}</div></div>
+    <h3 style="margin-top:18px">연결 정보</h3><div class="help">Firebase 프로젝트: <code>${FB_CFG.projectId}</code> (수불부와 공유)<br>컬렉션: <code>inv_products</code> <code>inv_lots</code> <code>inv_usage</code> <code>inv_isos</code> <code>inv_snapshots</code> <code>inv_history</code> · 수불부 <code>inbound</code> <code>history</code><br><b>변경 이력 규칙</b>: <code>match /inv_history/{id} { allow read, create: if &lt;기존 조건&gt;; allow update, delete: if false; }</code><br>사용자: ${esc(who()||'-')}</div></div>
   </div>`;
 }
 function prodModal(key){
@@ -856,9 +1007,13 @@ async function saveProd(key){
   const k=key||$('p_key').value.trim().toUpperCase().replace(/[^A-Z0-9_]/g,'');
   if(!k){ toast('키를 입력하세요'); return; }
   if(!key&&state.products.some(p=>p.key===k)){ toast('이미 있는 키입니다'); return; }
+  const prevP=key?{...P(key)}:{};
   await dbSet(COL.products,{...(key?P(key):{}),id:k,key:k,name:$('p_name').value.trim()||k,code:$('p_code').value.trim(),ledgerItem:$('p_li').value.trim(),ledgerPurity:+$('p_lp').value||0,
     lotPrefix:$('p_pre').value.trim(),ibcKg:+$('p_ibc').value||0,isoKg:+$('p_iso').value||0,minStock:+$('p_min').value||0,order:+$('p_ord').value||0});
   closeModal(); toast('저장되었습니다');
+  const np=P(k);
+  if(key){ const ch=diffObj(prevP,np); if(ch.length) logHistory({action:'품목 수정',kind:'cfg',col:COL.products,docId:k,product:k,summary:np.name,changes:ch}); }
+  else logHistory({action:'품목 추가',kind:'cfg',col:COL.products,docId:k,product:k,summary:`${np.name} (${k})`});
 }
 async function importSeed(){
   if(state.lots.some(l=>l.createdBy==='excel-import')){ toast('이미 엑셀 데이터가 이관되어 있습니다'); return; }
@@ -867,7 +1022,7 @@ async function importSeed(){
   SEED.lots.forEach(l=>ops.push({t:'set',col:COL.lots,data:{...l,createdBy:'excel-import'}}));
   SEED.usage.forEach(u=>ops.push({t:'set',col:COL.usage,data:{...u,createdBy:'excel-import'}}));
   SEED.isos.forEach(i=>ops.push({t:'set',col:COL.isos,data:{...i,createdBy:'excel-import'}}));
-  try{ await dbBatch(ops); toast('엑셀 데이터 이관 완료'); }catch(e){ toast('이관 실패: '+(e.code||e.message),5000); }
+  try{ await dbBatch(ops); toast('엑셀 데이터 이관 완료'); logHistory({action:'엑셀 데이터 이관',kind:'add',summary:`${SEED.lots.length} Lot · 사용기록 ${SEED.usage.length}건 · ISO ${SEED.isos.length}개`}); }catch(e){ toast('이관 실패: '+(e.code||e.message),5000); }
 }
 async function removeSeed(){
   if(!confirm('엑셀에서 이관한 Lot·사용기록·ISO를 모두 삭제할까요? (직접 등록한 데이터는 유지)')) return;
@@ -876,6 +1031,7 @@ async function removeSeed(){
     ...state.usage.filter(u=>u.createdBy==='excel-import').map(u=>({t:'del',col:COL.usage,id:u.id})),
     ...state.isos.filter(i=>i.createdBy==='excel-import').map(i=>({t:'del',col:COL.isos,id:i.id}))];
   await dbBatch(ops); toast('삭제되었습니다');
+  logHistory({action:'이관 데이터 삭제',kind:'del',summary:`엑셀 이관 데이터 ${ops.length}건 삭제`});
 }
 function exportExcel(){
   if(typeof XLSX==='undefined'){ toast('엑셀 라이브러리를 불러오지 못했습니다'); return; }
@@ -893,7 +1049,8 @@ function exportExcel(){
 
 /* ---------- 전역 노출 & 시작 ---------- */
 window.app={state,P,go,render,googleLogin,logout,closeModal,lotDetail,lotModal,lotCalc,saveLot,delLot,usageModal,uSet,uAddRow,uDel,uTypeChange,suggestLot,saveUsage,delUsage,
-  isoModal,saveIso,isoShip,doIsoShip,delIso,receiveModal,rvSet,rvAdd,rvDel,doReceive,prodModal,saveProd,importSeed,removeSeed,exportExcel,
+  isoModal,saveIso,isoShip,doIsoShip,delIso,receiveModal,rvSet,rvAdd,rvDel,doReceive,prodModal,saveProd,importSeed,removeSeed,exportExcel,exportHistory,
+  hf:(k,v)=>{state.histF[k]=v;render();}, hfReset:()=>{state.histF={user:'',action:'',q:'',from:'',to:''};render();}, toggleHist:id=>{state.histOpen=state.histOpen===id?null:id;render();},
   setProd:k=>{state.prod=k;render();}, setChartF:(k,v)=>{state.chartF[k]=v;drawDashCharts();}, setStockFilter:v=>{state.stockFilter=v;render();}, setIsoF:v=>{state.isoF=v;render();}, uf:(k,v)=>{state.usageF[k]=v;render();}};
 
 if(DEMO){
