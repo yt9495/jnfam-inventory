@@ -205,6 +205,7 @@ const SEED = {"products":[{"key":"HF","name":"HF 49%","code":"1790","ledgerItem"
    JNFAM 재고 현황 시스템 (Inventory Status)
    - Firestore (jnfam-ledger 프로젝트) : inv_products / inv_lots / inv_usage / inv_isos / inv_snapshots
    - 수불부 연동 : inbound 컬렉션(invType 미착품·선적예정) 읽기 + 입고 등록 시 미착품→상품 전환
+   - 출하 연동  : 출하(IBC)·ISO 출하 → 수불부 outbound(Goods Issue) 자동 등록/차감/삭제
    ===================================================================== */
 const FB_CFG = {
   apiKey: "AIzaSyDB1-k-Xp98Sw3mx2AM3AxROo-Y4_4FZoY",
@@ -215,10 +216,10 @@ const FB_CFG = {
   appId: "1:656610691213:web:1d03f91bd8dd36b2283ac4"
 };
 const FB_URL='https://www.gstatic.com/firebasejs/10.12.2/';
-const COL={products:'inv_products',lots:'inv_lots',usage:'inv_usage',isos:'inv_isos',snaps:'inv_snapshots',ledger:'inbound',hist:'inv_history',ledgerHist:'history'};
+const COL={products:'inv_products',lots:'inv_lots',usage:'inv_usage',isos:'inv_isos',snaps:'inv_snapshots',ledger:'inbound',hist:'inv_history',ledgerHist:'history',out:'outbound',cfg:'config'};
 const DEMO = new URLSearchParams(location.search).has('demo') || location.protocol==='file:';
 
-const state={products:[],lots:[],usage:[],isos:[],snaps:[],ledger:[],
+const state={products:[],lots:[],usage:[],isos:[],snaps:[],ledger:[],outbound:[],outErr:null,ledgerMaster:null,
   view:'dashboard', prod:null, stockFilter:'stock', usageF:{prod:'',type:'',from:'',to:'',q:''}, isoF:'대기',
   loaded:false, ledgerErr:null, invErr:null, chartF:{prod:'',part:'',trend:''},
   history:[], historyErr:'', histF:{user:'',action:'',q:'',from:'',to:''}, histOpen:null};
@@ -273,7 +274,7 @@ async function dbBatch(ops){ // ops: [{t:'set'|'patch'|'del', col, id, data}]
   }
   await b.commit();
 }
-const colKey=c=>({inv_products:'products',inv_lots:'lots',inv_usage:'usage',inv_isos:'isos',inv_snapshots:'snaps',inbound:'ledger'}[c]);
+const colKey=c=>({inv_products:'products',inv_lots:'lots',inv_usage:'usage',inv_isos:'isos',inv_snapshots:'snaps',inbound:'ledger',outbound:'outbound'}[c]);
 
 /* ---------------- 변경 이력 (inv_history, 추가 전용) ---------------- */
 const FIELD_LABEL={product:'품목',receivedDate:'입고일',sourceLot:'Lot #',container:'용기',unitKg:'단위중량',qtyIn:'입고수량',location:'보관위치',invoice:'Invoice',
@@ -358,6 +359,10 @@ function startListeners(fsM,db){
     unsubs.push(fsM.onSnapshot(fsM.collection(db,c),snap=>{ state[k]=snap.docs.map(d=>({id:d.id,...d.data()})); done(k); render(); },onErr(k)));
   });
   unsubs.push(fsM.onSnapshot(fsM.collection(db,COL.ledger),snap=>{ state.ledger=snap.docs.map(d=>({id:d.id,...d.data()})); state.ledgerErr=null; render(); },onErr('ledger')));
+  /* 수불부 출고(outbound) + 판매처 마스터 — 출하 연동용. 실패해도 재고 데이터에는 영향 없음 */
+  unsubs.push(fsM.onSnapshot(fsM.collection(db,COL.out),snap=>{ state.outbound=snap.docs.map(d=>({id:d.id,...d.data()})); state.outErr=null; render(); },
+    err=>{ state.outErr=err.code==='permission-denied'?'수불부 출고(outbound) 읽기 권한이 없습니다':'수불부 출고 불러오기 오류: '+err.code; console.warn('outbound',err); render(); }));
+  unsubs.push(fsM.onSnapshot(fsM.doc(db,COL.cfg,'app'),d=>{ state.ledgerMaster=d.exists()?(d.data().master||null):null; },err=>console.warn('config',err)));
   /* 변경 이력 — 실패해도 재고 데이터 연결에는 영향 없음 */
   state.history=[]; state.historyErr='';
   unsubs.push(fsM.onSnapshot(fsM.query(fsM.collection(db,COL.hist),fsM.orderBy('tsMs','desc'),fsM.limit(500)),snap=>{
@@ -372,7 +377,7 @@ async function connectFirebase(){
     auM.onAuthStateChanged(auth,user=>{
       currentUser=user;
       if(user){ hideLogin(); startListeners(fsM,db); }
-      else { stopListeners(); fb=null; Object.assign(state,{products:[],lots:[],usage:[],isos:[],snaps:[],ledger:[],history:[],loaded:false}); setConn('off','로그인 필요'); showLogin(''); render(); }
+      else { stopListeners(); fb=null; Object.assign(state,{products:[],lots:[],usage:[],isos:[],snaps:[],ledger:[],outbound:[],ledgerMaster:null,history:[],loaded:false}); setConn('off','로그인 필요'); showLogin(''); render(); }
     });
   }catch(e){ setConn('err','Firebase 연결 실패'); toast('Firebase 연결 실패: '+e.message); console.error(e); }
 }
@@ -405,6 +410,73 @@ const lotUsedC=l=>remMap()[l.id]||0;
 const lotEA=l=>{ const u=+l.unitKg||P(l.product).ibcKg||1; return lotRem(l)/u; };
 /* 수불부 inbound → 품목 매핑 */
 function ledgerProd(r){ const p=state.products.find(p=>p.ledgerItem===r.item && Math.abs((+p.ledgerPurity||0)-(+r.purity||0))<0.0001); return p?p.key:null; }
+/* ---------- 수불부 출고(outbound) 연동 ----------
+   재고 현황의 '출하'(IBC) / 'ISO 출하' → 수불부 outbound(Goods Issue) 1건 자동 생성
+   usage.outboundId / iso.outboundId ↔ outbound.invUsageIds / outbound.invIsoId 로 연결 */
+const ledgerKey=k=>{ const p=P(k); return p&&p.ledgerItem&&+p.ledgerPurity?{item:p.ledgerItem,purity:+p.ledgerPurity}:null; };
+const ledgerBuyers=()=>[...new Set(((state.ledgerMaster&&state.ledgerMaster.buyers)||[]).concat(state.outbound.map(o=>o.buyer)).filter(Boolean))];
+const ledgerPacks=()=>((state.ledgerMaster&&state.ledgerMaster.packs)||['IBC','ISO','Drum']);
+const r2=n=>Math.round((+n||0)*100)/100;
+const outExists=id=>!!id&&state.outbound.some(o=>o.id===id);
+function lastPrice(k,buyer){
+  const lk=ledgerKey(k); if(!lk||!buyer) return '';
+  const last=state.outbound.filter(r=>r.item===lk.item&&Math.abs(+r.purity-lk.purity)<1e-4&&r.buyer===buyer&&+r.qty>0&&+r.amount>0)
+    .sort((a,b)=>dstr(b.date).localeCompare(dstr(a.date)))[0];
+  return last?(+last.price>0?+last.price:+(last.amount/last.qty).toFixed(4)):'';
+}
+function outRec({k,date,buyer,pack,qty,price,note,usageIds,isoId}){
+  const lk=ledgerKey(k); qty=r2(qty); price=+price||0;
+  return {id:uid('out'),category:'Goods Issue',item:lk.item,purity:lk.purity,pack,buyer,date,qty,price,amount:qty>0?r2(qty*price):0,shuttle:0,
+    note:note||'',inCode:'',src:'inventory',invUsageIds:usageIds||[],invIsoId:isoId||''};
+}
+function buyerOps(buyer){ const M=state.ledgerMaster; if(!M||!buyer||(M.buyers||[]).includes(buyer)) return [];
+  return [{t:'patch',col:COL.cfg,id:'app',data:{master:{...M,buyers:[...(M.buyers||[]),buyer]}}}]; }
+function ledgerOutLog(action,kind,o,changes){
+  logHistory({action,kind,col:'outbound',docId:o.id,summary:`${o.item} ${(+o.purity*100).toFixed(2)}% → ${o.buyer||''} · ${fmt(o.qty)} kg · ${o.date} (재고현황 연동)`,changes:changes||[]},COL.ledgerHist);
+}
+/* 사용기록 삭제 시 연결된 수불부 출고 차감/삭제 */
+function outDetach(removedIds){
+  const rm=new Set(removedIds), ops=[], logs=[];
+  [...new Set(state.usage.filter(u=>rm.has(u.id)&&u.outboundId).map(u=>u.outboundId))].forEach(oid=>{
+    const o=state.outbound.find(x=>x.id===oid); if(!o) return;
+    const rest=state.usage.filter(x=>x.outboundId===oid&&!rm.has(x.id));
+    if(!rest.length){ ops.push({t:'del',col:COL.out,id:oid}); logs.push(['출고 삭제','del',o,[]]); }
+    else { const q=r2(rest.reduce((s,x)=>s+(+x.qtyKg||0),0));
+      ops.push({t:'patch',col:COL.out,id:oid,data:{qty:q,amount:r2(q*(+o.price||0)),invUsageIds:rest.map(x=>x.id)}});
+      logs.push(['출고 수정','upd',{...o,qty:q},[{f:'qty',label:'출고수량',from:fmt(o.qty),to:fmt(q)}]]); }
+  });
+  return {ops,logs};
+}
+const runOutLogs=logs=>logs.forEach(([a,k,o,c])=>ledgerOutLog(a+' (재고현황 연동)',k,o,c));
+/* 모달 공통: 수불부 연동 입력칸 */
+let syncCtx={};
+function syncBox(pfx,k,{pack='IBC',checkbox=true}={}){
+  const lk=ledgerKey(k);
+  if(!lk) return `<div class="banner" style="margin-top:4px">이 품목은 수불부 품목/농도 매핑이 없어 수불부 출고 연동이 되지 않습니다 (설정 › 품목에서 지정)</div>`;
+  if(state.outErr) return `<div class="banner red" style="margin-top:4px">${esc(state.outErr)} — 수불부 연동 없이 재고 현황에만 저장됩니다</div>`;
+  return `<div class="calc-box" style="display:block;margin-top:4px">
+    ${checkbox?`<label class="chk" style="margin-bottom:8px"><input type="checkbox" id="${pfx}_sync" checked><span><b>수불부 출고 자동 등록</b> — ${esc(lk.item)} ${(lk.purity*100).toFixed(2)}% · Goods Issue</span></label>`:`<div style="margin-bottom:8px"><b>수불부 출고</b> — ${esc(lk.item)} ${(lk.purity*100).toFixed(2)}% · Goods Issue</div>`}
+    <div class="form-grid">
+      <div class="fld"><label>용기</label><select id="${pfx}_pack">${ledgerPacks().map(x=>`<option ${x===pack?'selected':''}>${esc(x)}</option>`).join('')}</select></div>
+      <div class="fld"><label>단가 ($/kg) <span class="help">· 같은 고객 최근 단가</span></label><input type="number" step="0.001" id="${pfx}_price" oninput="this.dataset.touched=1;app.syncAmt('${pfx}')"></div>
+      <div class="fld"><label>출고금액 ($)</label><div id="${pfx}_amt" style="padding:8px 0;font-weight:700">-</div></div>
+    </div></div>`;
+}
+function syncQty(pfx){ return pfx==='u'?uRows.reduce((s,r)=>s+uKg(r),0):(+syncCtx.qty||0); }
+function syncAmt(pfx){ const el=$(pfx+'_amt'); if(!el) return; const q=syncQty(pfx), pr=+($(pfx+'_price')||{}).value||0;
+  el.textContent=q>0&&pr?'$'+r2(q*pr).toLocaleString('en-US',{minimumFractionDigits:2}):(q>0?'단가 입력 필요':'-'); }
+function syncPrice(pfx){ const el=$(pfx+'_price'); if(!el) return; if(!el.dataset.touched){ const k=pfx==='u'?$('u_prod').value:syncCtx.k; el.value=lastPrice(k,($(pfx+'_cust')||{}).value?.trim()); } syncAmt(pfx); }
+const custList=(id,extra)=>`<datalist id="${id}">${[...new Set(ledgerBuyers().concat(extra||[]))].map(c=>`<option value="${esc(c)}">`).join('')}</datalist>`;
+async function batchWithOut(ops,onlyInvOps){
+  try{ await dbBatch(ops); return true; }
+  catch(e){
+    if(e.code==='permission-denied'&&onlyInvOps){
+      if(!confirm('수불부 출고 쓰기 권한이 없어 수불부 연동에 실패했습니다.\n재고 현황에만 저장할까요? (나중에 출고·사용 기록에서 “수불부 반영” 가능)')) return null;
+      await dbBatch(onlyInvOps); return false;
+    }
+    toast('저장 실패: '+(e.code||e.message),5000); console.error(e); return null;
+  }
+}
 const ledgerPending=()=>state.ledger.filter(r=>r.invType==='미착품'||r.invType==='선적예정(미인식)');
 const linkedLedgerIds=()=>new Set(state.lots.filter(l=>l.ledgerInboundId).map(l=>l.ledgerInboundId));
 function stockOf(k){
@@ -653,8 +725,9 @@ async function delLot(id){
   const us=state.usage.filter(u=>u.lotId===id);
   if(!confirm(`이 Lot을 삭제할까요?${us.length?`\n연결된 사용 기록 ${us.length}건도 함께 삭제됩니다.`:''}`)) return;
   const lot=state.lots.find(x=>x.id===id)||{};
-  await dbBatch([{t:'del',col:COL.lots,id},...us.map(u=>({t:'del',col:COL.usage,id:u.id}))]);
-  closeModal(); toast('삭제되었습니다');
+  const det=outDetach(us.map(u=>u.id));
+  try{ await dbBatch([{t:'del',col:COL.lots,id},...us.map(u=>({t:'del',col:COL.usage,id:u.id})),...det.ops]); }catch(e){ toast('삭제 실패: '+(e.code||e.message),5000); return; }
+  runOutLogs(det.logs); closeModal(); toast('삭제되었습니다');
   logHistory({action:'Lot 삭제',kind:'del',col:COL.lots,docId:id,product:lot.product,summary:`${lotLabel(lot)} · 입고 ${fmt(lot.qtyIn)} kg${us.length?` · 사용기록 ${us.length}건 함께 삭제`:''}`});
 }
 
@@ -671,17 +744,18 @@ function usageModal(k,lotId){
     <div class="fld"><label>일자</label><input type="date" id="u_date" value="${d}" onchange="app.suggestLot()"></div>
     <div class="fld"><label>구분</label><select id="u_type" onchange="app.uTypeChange()">
       <option value="출하">출하 (고객 출고)</option><option value="ISO충전">ISO 충전 (IBC→ISO 재포장)</option><option value="반납">반납 (재고 복귀)</option><option value="조정">재고 조정 (손실·샘플 등)</option></select></div>
-    <div class="fld"><label>고객</label><input type="text" id="u_cust" list="custList" placeholder="Qcells, PVJC, ESF…"><datalist id="custList">${[...new Set(state.usage.map(u=>u.customer).concat(state.isos.map(i=>i.customer)).filter(Boolean))].map(c=>`<option value="${esc(c)}">`).join('')}</datalist></div>
+    <div class="fld"><label>고객 <span class="help" id="u_custReq">· 출하 시 필수</span></label><input type="text" id="u_cust" list="custList" placeholder="Qcells, PVJC, ESF…" oninput="app.syncPrice('u')">${custList('custList',state.usage.map(u=>u.customer).concat(state.isos.map(i=>i.customer)).filter(Boolean))}</div>
     <div class="fld"><label>JNFAM Lot #</label><input type="text" id="u_jl" value="${nextJnfamLot(k,d)}"></div>
     <div class="fld" id="u_isoBox" style="display:none"><label>ISO 탱크 번호</label><input type="text" id="u_tank" placeholder="예: ISO Tank 4"></div>
     <div class="fld full"><label>비고</label><input type="text" id="u_note"></div>
+    <div class="fld full" id="u_syncWrap">${syncBox('u',k)}</div>
   </div>
   <h3 style="margin:18px 0 8px;font-size:14px">사용 Lot (입고일 순 · FIFO 권장)</h3>
   <table class="split-tbl"><thead><tr><th>Lot</th><th class="num">현재고</th><th style="width:110px">EA</th><th style="width:140px">kg</th><th></th></tr></thead><tbody id="u_rows"></tbody></table>
   <div style="margin-top:8px"><button class="btn ghost sm" onclick="app.uAddRow()">＋ Lot 추가</button></div>
   <div class="calc-box" style="margin-top:12px" id="u_sum"></div>
   <div class="modal-actions"><button class="btn ghost" onclick="app.closeModal()">취소</button><button class="btn primary" onclick="app.saveUsage('${k}')">저장</button></div>`,true);
-  uRender();
+  uRender(); syncPrice('u');
 }
 function uAvail(k){ return state.lots.filter(l=>l.product===k&&(lotRem(l)>0||uRows.some(r=>r.lotId===l.id))).sort((a,b)=>(dstr(a.receivedDate)||'').localeCompare(dstr(b.receivedDate)||'')); }
 function uRender(){
@@ -710,8 +784,9 @@ function uSum(){
   uRows.forEach(r=>{ const kg=uKg(r); tot+=kg; ea+=+r.ea||0; const l=state.lots.find(x=>x.id===r.lotId); if(l&&typ!=='반납'&&kg>lotRem(l)+0.01) over.push(l.sourceLot); });
   const p=P($('u_prod').value);
   $('u_sum').innerHTML=`<span>합계 <b>${fmt1(ea)} EA</b></span><span><b>${fmt(tot)} kg</b></span>${typ==='ISO충전'?`<span>ISO 1탱크 기준 ${fmt(p.isoKg)} kg → <b class="${Math.abs(tot-p.isoKg)<1?'good':'bad'}">${tot-p.isoKg>=0?'+':''}${fmt(tot-p.isoKg)} kg</b></span>`:''}${over.length?`<span class="bad">⚠ 현재고 초과: ${esc(over.join(', '))}</span>`:''}`;
+  syncAmt('u');
 }
-function uTypeChange(){ $('u_isoBox').style.display=$('u_type').value==='ISO충전'?'block':'none'; uSum(); }
+function uTypeChange(){ const t=$('u_type').value; $('u_isoBox').style.display=t==='ISO충전'?'block':'none'; $('u_syncWrap').style.display=t==='출하'?'block':'none'; $('u_custReq').style.display=t==='출하'?'inline':'none'; uSum(); }
 function suggestLot(){ const k=$('u_prod').value; $('u_jl').value=nextJnfamLot(k,$('u_date').value); }
 async function saveUsage(k){
   const typ=$('u_type').value, date=$('u_date').value, cust=$('u_cust').value.trim(), jl=$('u_jl').value.trim(), note=$('u_note').value.trim();
@@ -719,24 +794,39 @@ async function saveUsage(k){
   const rows=uRows.map(r=>({...r,kgv:uKg(r)})).filter(r=>r.lotId&&r.kgv>0);
   if(!rows.length){ toast('수량을 입력하세요'); return; }
   for(const r of rows){ const l=state.lots.find(x=>x.id===r.lotId); if(typ!=='반납'&&r.kgv>lotRem(l)+0.01&&!confirm(`Lot ${l.sourceLot}의 현재고(${fmt(lotRem(l))}kg)를 초과합니다. 그래도 저장할까요?`)) return; }
+  if(typ==='출하'&&!cust){ toast('출하는 고객을 입력하세요 (수불부 판매처로 등록됩니다)'); $('u_cust').focus(); return; }
+  const doSync=typ==='출하'&&!!fb&&!!ledgerKey(k)&&!!$('u_sync')&&$('u_sync').checked;
+  const price=doSync?(+$('u_price').value||0):0;
+  if(doSync&&!price&&!confirm('단가가 비어 있습니다. 수불부에 금액 $0으로 등록할까요?\n(나중에 수불부에서 단가를 수정할 수 있습니다)')) return;
   const ops=[]; const isoId=typ==='ISO충전'?uid('is'):null; const uids=[];
+  const outId=doSync?uid('out'):null;
   rows.forEach(r=>{ const id=uid('us'); uids.push(id);
-    ops.push({t:'set',col:COL.usage,data:{id,lotId:r.lotId,product:k,date,type:typ,qtyKg:typ==='반납'?-Math.abs(r.kgv):r.kgv,ea:r.ea!==''?+r.ea:null,customer:cust,jnfamLot:jl,note,isoId}}); });
+    ops.push({t:'set',col:COL.usage,data:{id,lotId:r.lotId,product:k,date,type:typ,qtyKg:typ==='반납'?-Math.abs(r.kgv):r.kgv,ea:r.ea!==''?+r.ea:null,customer:cust,jnfamLot:jl,note,isoId,...(outId?{outboundId:outId}:{})}}); });
   if(isoId){ const tot=rows.reduce((s,r)=>s+r.kgv,0);
     ops.push({t:'set',col:COL.isos,data:{id:isoId,product:k,tankNo:$('u_tank').value.trim(),qtyKg:tot,fillDate:date,status:'대기',customer:cust,jnfamLot:jl,note,sourceUsageIds:uids,shipDate:''}}); }
-  await dbBatch(ops);
+  let orec=null;
+  if(doSync){
+    orec={...outRec({k,date,buyer:cust,pack:$('u_pack').value,qty:rows.reduce((s,r)=>s+r.kgv,0),price,note:[jl,note].filter(Boolean).join(' / '),usageIds:uids}),id:outId};
+    const invOnly=ops.map(o=>{ const d={...o.data}; delete d.outboundId; return {...o,data:d}; });
+    ops.push({t:'set',col:COL.out,data:orec}, ...buyerOps(cust));
+    const ok=await batchWithOut(ops,invOnly); if(ok===null) return; if(!ok) orec=null;
+  } else await dbBatch(ops);
+  if(orec) ledgerOutLog('출고 등록 (재고현황 연동)','add',orec);
   { const tot=rows.reduce((s,r)=>s+r.kgv,0); const lotsTxt=rows.map(r=>{ const l=state.lots.find(x=>x.id===r.lotId)||{}; return `${l.sourceLot||'?'}(${fmt(r.kgv)})`; }).join(', ');
     logHistory({action:typ==='ISO충전'?'ISO 충전':typ==='출하'?'출하 등록':typ+' 등록',kind:'out',col:COL.usage,docId:uids[0],product:k,
       summary:`${pname(k)} · ${fmt(tot)} kg${cust?' · '+cust:''}${jl?' · '+jl:''} · Lot ${lotsTxt}`}); }
-  closeModal(); toast(typ==='ISO충전'?'ISO 충전 등록 — ISO 탱크(대기)가 생성되었습니다':'저장되었습니다');
+  closeModal(); toast(typ==='ISO충전'?'ISO 충전 등록 — ISO 탱크(대기)가 생성되었습니다':orec?'저장되었습니다 — 수불부 출고도 등록되었습니다':'저장되었습니다');
 }
 async function delUsage(id,lotId){
   const u=state.usage.find(x=>x.id===id); if(!u) return;
-  if(!confirm('이 사용 기록을 삭제할까요? (현재고가 복원됩니다)')) return;
-  const ops=[{t:'del',col:COL.usage,id}];
+  const linked=outExists(u.outboundId);
+  if(!confirm('이 사용 기록을 삭제할까요? (현재고가 복원됩니다)'+(linked?'\n연결된 수불부 출고도 함께 차감/삭제됩니다.':''))) return;
+  const det=outDetach([id]);
+  const ops=[{t:'del',col:COL.usage,id},...det.ops];
   if(u.isoId){ const iso=state.isos.find(i=>i.id===u.isoId); if(iso){ const rest=(iso.sourceUsageIds||[]).filter(x=>x!==id);
     if(!rest.length) ops.push({t:'del',col:COL.isos,id:iso.id}); else ops.push({t:'patch',col:COL.isos,id:iso.id,data:{sourceUsageIds:rest,qtyKg:(+iso.qtyKg||0)-(+u.qtyKg||0)}}); } }
-  await dbBatch(ops); toast('삭제되었습니다'); if(lotId) setTimeout(()=>lotDetail(lotId),300);
+  try{ await dbBatch(ops); }catch(e){ toast('삭제 실패: '+(e.code||e.message),5000); return; }
+  runOutLogs(det.logs); toast('삭제되었습니다'); if(lotId) setTimeout(()=>lotDetail(lotId),300);
   { const l=state.lots.find(x=>x.id===u.lotId)||{};
     logHistory({action:'사용기록 삭제',kind:'del',col:COL.usage,docId:id,product:u.product,summary:`${pname(u.product)} · ${u.type} ${fmt(u.qtyKg)} kg · ${dstr(u.date)} · Lot ${l.sourceLot||'?'}${u.customer?' · '+u.customer:''}`}); }
 }
@@ -757,10 +847,73 @@ function vUsage(){
     <input type="date" class="w-auto" value="${f.from}" onchange="app.uf('from',this.value)"> ~ <input type="date" class="w-auto" value="${f.to}" onchange="app.uf('to',this.value)">
     <input type="text" class="w-auto" placeholder="고객·Lot·비고 검색" value="${esc(f.q)}" onchange="app.uf('q',this.value)">
     <span class="spacer"></span><button class="btn primary" onclick="app.usageModal(app.state.usageF.prod||app.state.prod)">📤 출고·사용 등록</button></div>
-  <div class="help" style="margin-bottom:8px">${us.length}건 · 합계 ${fmt(sum)} kg${us.length>500?' · 최근 500건만 표시':''}</div>
-  <div class="tbl-scroll tall"><table><thead><tr><th>일자</th><th>품목</th><th>구분</th><th>Source Lot</th><th class="num">EA</th><th class="num">수량(kg)</th><th>고객</th><th>JNFAM Lot</th><th>비고</th><th>등록자</th><th></th></tr></thead><tbody>
-  ${shown.map(u=>{ const l=state.lots.find(x=>x.id===u.lotId)||{}; return `<tr><td>${dstr(u.date)}</td><td>${esc(pname(u.product))}</td><td>${typeTag(u.type)}</td><td class="mono"><a href="#" onclick="app.lotDetail('${u.lotId}');return false">${esc(l.sourceLot||'')}</a></td><td class="num">${u.ea!=null?fmt1(u.ea):''}</td><td class="num">${fmt(u.qtyKg)}</td><td>${esc(u.customer)}</td><td class="mono">${esc(u.jnfamLot)}</td><td class="wrap">${esc(u.note)}</td><td class="help">${esc((u.createdBy||'').split('@')[0])}</td><td><button class="btn danger sm" onclick="app.delUsage('${u.id}')">삭제</button></td></tr>`; }).join('')||'<tr><td colspan="11" class="empty">기록 없음</td></tr>'}
+  <div class="help" style="margin-bottom:8px">${us.length}건 · 합계 ${fmt(sum)} kg${us.length>500?' · 최근 500건만 표시':''}${(()=>{ const n=unsyncedShip(); return n?` · <span class="tag amber">수불부 미반영 출하 ${n}건</span> (각 행의 “수불부 반영”으로 등록 또는 기존 수불부 출고와 연결)`:''; })()}</div>
+  <div class="tbl-scroll tall"><table><thead><tr><th>일자</th><th>품목</th><th>구분</th><th>Source Lot</th><th class="num">EA</th><th class="num">수량(kg)</th><th>고객</th><th>JNFAM Lot</th><th>비고</th><th>등록자</th><th>수불부</th><th></th></tr></thead><tbody>
+  ${shown.map(u=>{ const l=state.lots.find(x=>x.id===u.lotId)||{}; return `<tr><td>${dstr(u.date)}</td><td>${esc(pname(u.product))}</td><td>${typeTag(u.type)}</td><td class="mono"><a href="#" onclick="app.lotDetail('${u.lotId}');return false">${esc(l.sourceLot||'')}</a></td><td class="num">${u.ea!=null?fmt1(u.ea):''}</td><td class="num">${fmt(u.qtyKg)}</td><td>${esc(u.customer)}</td><td class="mono">${esc(u.jnfamLot)}</td><td class="wrap">${esc(u.note)}</td><td class="help">${esc((u.createdBy||'').split('@')[0])}</td><td>${outCellU(u)}</td><td><button class="btn danger sm" onclick="app.delUsage('${u.id}')">삭제</button></td></tr>`; }).join('')||'<tr><td colspan="12" class="empty">기록 없음</td></tr>'}
   </tbody></table></div></div>`;
+}
+
+/* ---------- 수불부 반영 (기존 출하 → 수불부 출고 등록/연결) ---------- */
+function outCellU(u){
+  if(u.type!=='출하'||state.outErr) return '';
+  if(outExists(u.outboundId)) return '<span class="tag ok">연동</span>';
+  if(u.createdBy==='excel-import'&&!u.outboundId) return '<span class="help">엑셀 이관</span>';
+  return `${u.outboundId?'<span class="tag warn" title="수불부에서 출고가 삭제됨">수불부 삭제됨</span> ':''}<button class="btn ghost sm" onclick="app.linkModal('u','${u.id}')">수불부 반영</button>`;
+}
+function outCellI(i){
+  if(i.status!=='출하완료'||state.outErr) return '';
+  if(outExists(i.outboundId)) return '<span class="tag ok">연동</span>';
+  return `${i.outboundId?'<span class="tag warn">수불부 삭제됨</span> ':''}<button class="btn ghost sm" onclick="app.linkModal('i','${i.id}')">수불부 반영</button>`;
+}
+const unsyncedShip=()=>state.outErr?0:state.usage.filter(u=>u.type==='출하'&&u.createdBy!=='excel-import'&&!outExists(u.outboundId)).length
+  + state.isos.filter(i=>i.status==='출하완료'&&!outExists(i.outboundId)).length;
+let linkCtx=null;
+function linkModal(kind,id){
+  let k,date,cust,qty,ids=[],label,pack;
+  if(kind==='u'){ const u=state.usage.find(x=>x.id===id); if(!u) return;
+    const grp=state.usage.filter(x=>x.type==='출하'&&x.product===u.product&&dstr(x.date)===dstr(u.date)&&(x.createdAt||'')===(u.createdAt||'')&&(x.customer||'')===(u.customer||'')&&!outExists(x.outboundId));
+    ids=grp.map(x=>x.id); k=u.product; date=dstr(u.date); cust=u.customer||''; qty=grp.reduce((s,x)=>s+(+x.qtyKg||0),0); pack='IBC';
+    label=`${pname(k)} 출하 · ${date} · ${fmt(qty)} kg (${grp.length}개 Lot)${u.jnfamLot?' · '+u.jnfamLot:''}`; }
+  else { const i=state.isos.find(x=>x.id===id); if(!i) return; k=i.product; date=dstr(i.shipDate); cust=i.customer||''; qty=+i.qtyKg||0; ids=[id]; pack='ISO';
+    label=`${pname(k)} ISO 출하 · ${i.tankNo||''} · ${date} · ${fmt(qty)} kg`; }
+  const lk=ledgerKey(k);
+  if(!lk){ toast('이 품목은 수불부 품목 매핑이 없습니다 (설정 › 품목)'); return; }
+  const cands=state.outbound.filter(o=>o.item===lk.item&&Math.abs(+o.purity-lk.purity)<1e-4&&o.category!=='충전'&&!(o.invUsageIds||[]).length&&!o.invIsoId&&dstr(o.date)&&Math.abs(diffDays(dstr(o.date),date))<=7)
+    .sort((a,b)=>(Math.abs(+a.qty-qty)-Math.abs(+b.qty-qty))||(Math.abs(diffDays(dstr(a.date),date))-Math.abs(diffDays(dstr(b.date),date))));
+  linkCtx={kind,ids,k,qty}; syncCtx={k,qty};
+  openModal(`<h3>🔗 수불부 반영</h3>
+  <div class="calc-box" style="margin-bottom:12px"><span><b>${esc(label)}</b></span>${cust?`<span>고객 <b>${esc(cust)}</b></span>`:''}</div>
+  <div class="banner blue" style="margin-bottom:12px">수불부에 이 출고를 <b>이미 직접 입력했다면</b> 아래 후보에서 골라 <b>연결</b>하세요 (수불부 수량은 바뀌지 않음). 새로 등록하면 수불부 출고가 중복될 수 있습니다.</div>
+  <div class="tbl-scroll"><table><thead><tr><th></th><th>수불부 출고일</th><th>판매처</th><th>용기</th><th class="num">수량(kg)</th><th class="num">차이</th></tr></thead><tbody>
+    <tr><td><input type="radio" name="lk" value="" checked onchange="app.lkPick()"></td><td colspan="5"><b>수불부에 새 출고로 등록</b></td></tr>
+    ${cands.slice(0,8).map(o=>`<tr><td><input type="radio" name="lk" value="${o.id}" onchange="app.lkPick()"></td><td>${dstr(o.date)}</td><td>${esc(o.buyer||'')}</td><td>${esc(o.pack||'')}</td><td class="num">${fmt(o.qty)}</td><td class="num ${Math.abs(o.qty-qty)<1?'good':'bad'}">${o.qty-qty>=0?'+':''}${fmt(o.qty-qty)}</td></tr>`).join('')||'<tr><td></td><td colspan="5" class="help">±7일 내 연결 가능한 수불부 출고 없음</td></tr>'}
+  </tbody></table></div>
+  <div id="lk_new" style="margin-top:12px"><div class="form-grid">
+    <div class="fld"><label>출고일</label><input type="date" id="l_date" value="${date}"></div>
+    <div class="fld"><label>고객 (판매처) <span class="help">· 필수</span></label><input type="text" id="l_cust" list="l_custList" value="${esc(cust)}" oninput="app.syncPrice('l')">${custList('l_custList')}</div>
+    <div class="fld full">${syncBox('l',k,{pack,checkbox:false})}</div></div></div>
+  <div class="modal-actions"><button class="btn ghost" onclick="app.closeModal()">취소</button><button class="btn primary" onclick="app.doLink()">저장</button></div>`,true);
+  syncPrice('l');
+}
+function lkPick(){ const v=(document.querySelector('input[name=lk]:checked')||{}).value; $('lk_new').style.display=v?'none':'block'; }
+async function doLink(){
+  const c=linkCtx; if(!c) return; const col=c.kind==='u'?COL.usage:COL.isos;
+  const pick=(document.querySelector('input[name=lk]:checked')||{}).value;
+  if(pick){
+    const o=state.outbound.find(x=>x.id===pick); if(!o) return;
+    const ops=[{t:'patch',col:COL.out,id:pick,data:c.kind==='u'?{src:'inventory',invUsageIds:c.ids}:{src:'inventory',invIsoId:c.ids[0]}},
+      ...c.ids.map(id=>({t:'patch',col,id,data:{outboundId:pick}}))];
+    try{ await dbBatch(ops); }catch(e){ toast('연결 실패: '+(e.code||e.message),5000); return; }
+    ledgerOutLog('출고 연결 (재고현황 연동)','upd',o,[]); closeModal(); toast('기존 수불부 출고와 연결되었습니다'); return;
+  }
+  const date=$('l_date').value, cust=$('l_cust').value.trim(), price=+$('l_price').value||0;
+  if(!date||!cust){ toast('출고일과 고객을 입력하세요'); return; }
+  if(!price&&!confirm('단가가 비어 있습니다. 수불부에 금액 $0으로 등록할까요?')) return;
+  const src=c.kind==='u'?state.usage.find(x=>x.id===c.ids[0]):state.isos.find(x=>x.id===c.ids[0]);
+  const o=outRec({k:c.k,date,buyer:cust,pack:$('l_pack').value,qty:c.qty,price,note:[src&&src.jnfamLot,c.kind==='i'&&src?src.tankNo:''].filter(Boolean).join(' / '),usageIds:c.kind==='u'?c.ids:[],isoId:c.kind==='i'?c.ids[0]:''});
+  const ops=[{t:'set',col:COL.out,data:o},...c.ids.map(id=>({t:'patch',col,id,data:{outboundId:o.id,...(src&&!src.customer?{customer:cust}:{})}})),...buyerOps(cust)];
+  try{ await dbBatch(ops); }catch(e){ toast('수불부 등록 실패: '+(e.code||e.message),5000); return; }
+  ledgerOutLog('출고 등록 (재고현황 연동)','add',o); closeModal(); toast('수불부 출고로 등록되었습니다');
 }
 
 /* ---------- ISO 탱크 ---------- */
@@ -774,10 +927,10 @@ function vIso(){
   <div class="panel"><div class="toolbar">
     <select class="w-auto" onchange="app.setIsoF(this.value)">${[['대기','대기'],['출하완료','출하완료'],['','전체']].map(([v,l])=>`<option value="${v}" ${f===v?'selected':''}>${l}</option>`).join('')}</select>
     <span class="spacer"></span><button class="btn ghost" onclick="app.isoModal()">＋ ISO 직접 등록</button></div>
-  <div class="tbl-scroll"><table><thead><tr><th>상태</th><th>품목</th><th>탱크</th><th>충전일</th><th class="num">수량(kg)</th><th>원료 Lot</th><th>JNFAM Lot</th><th>고객</th><th>출하일</th><th>비고</th><th></th></tr></thead><tbody>
+  <div class="tbl-scroll"><table><thead><tr><th>상태</th><th>품목</th><th>탱크</th><th>충전일</th><th class="num">수량(kg)</th><th>원료 Lot</th><th>JNFAM Lot</th><th>고객</th><th>출하일</th><th>비고</th><th>수불부</th><th></th></tr></thead><tbody>
   ${list.map(i=>{ const src=(i.sourceUsageIds||[]).map(id=>{ const u=state.usage.find(x=>x.id===id); const l=u&&state.lots.find(x=>x.id===u.lotId); return l?`${l.sourceLot}(${fmt1(u.ea||u.qtyKg/(l.unitKg||1))})`:''; }).filter(Boolean).join(', ');
-    return `<tr><td>${i.status==='대기'?'<span class="tag purple">대기</span>':'<span class="tag gray">출하완료</span>'}</td><td>${esc(pname(i.product))}</td><td>${esc(i.tankNo)}</td><td>${dstr(i.fillDate)}</td><td class="num">${fmt(i.qtyKg)}</td><td class="mono wrap">${esc(src)}</td><td class="mono">${esc(i.jnfamLot)}</td><td>${esc(i.customer)}</td><td>${dstr(i.shipDate)}</td><td class="wrap">${esc(i.note)}</td>
-    <td>${i.status==='대기'?`<button class="btn green sm" onclick="app.isoShip('${i.id}')">출하 처리</button> `:''}<button class="btn ghost sm" onclick="app.isoModal('${i.id}')">수정</button></td></tr>`; }).join('')||'<tr><td colspan="11" class="empty">해당 ISO 없음</td></tr>'}
+    return `<tr><td>${i.status==='대기'?'<span class="tag purple">대기</span>':'<span class="tag gray">출하완료</span>'}</td><td>${esc(pname(i.product))}</td><td>${esc(i.tankNo)}</td><td>${dstr(i.fillDate)}</td><td class="num">${fmt(i.qtyKg)}</td><td class="mono wrap">${esc(src)}</td><td class="mono">${esc(i.jnfamLot)}</td><td>${esc(i.customer)}</td><td>${dstr(i.shipDate)}</td><td class="wrap">${esc(i.note)}</td><td>${outCellI(i)}</td>
+    <td>${i.status==='대기'?`<button class="btn green sm" onclick="app.isoShip('${i.id}')">출하 처리</button> `:''}<button class="btn ghost sm" onclick="app.isoModal('${i.id}')">수정</button></td></tr>`; }).join('')||'<tr><td colspan="12" class="empty">해당 ISO 없음</td></tr>'}
   </tbody></table></div></div>`;
 }
 function isoModal(id){
@@ -802,7 +955,18 @@ async function saveIso(id){
   const o={...old,product:$('i_prod').value,tankNo:$('i_tank').value.trim(),qtyKg:$('i_qty').disabled?old.qtyKg:+$('i_qty').value,fillDate:$('i_fill').value,status:$('i_status').value,shipDate:$('i_ship').value,customer:$('i_cust').value.trim(),jnfamLot:$('i_jl').value.trim(),note:$('i_note').value.trim()};
   if(o.status==='출하완료'&&!o.shipDate) o.shipDate=today();
   if(!id) delete o.id;
-  await dbSet(COL.isos,o); closeModal(); toast('저장되었습니다');
+  await dbSet(COL.isos,o);
+  if(id&&outExists(old.outboundId)){
+    const ob=state.outbound.find(x=>x.id===old.outboundId);
+    try{
+      if(o.status!=='출하완료'){ await dbBatch([{t:'del',col:COL.out,id:ob.id},{t:'patch',col:COL.isos,id,data:{outboundId:''}}]); ledgerOutLog('출고 삭제 (재고현황 연동)','del',ob); }
+      else { const lk=ledgerKey(o.product)||{item:ob.item,purity:ob.purity}; const q=r2(o.qtyKg);
+        const np={item:lk.item,purity:lk.purity,date:dstr(o.shipDate),buyer:o.customer||ob.buyer,qty:q,amount:r2(q*(+ob.price||0))};
+        const ch=[['date','출고일'],['buyer','판매처'],['qty','출고수량'],['item','품목']].filter(([f])=>String(np[f])!==String(ob[f])).map(([f,l])=>({f,label:l,from:String(ob[f]??''),to:String(np[f])}));
+        if(ch.length){ await dbBatch([{t:'patch',col:COL.out,id:ob.id,data:np},...buyerOps(np.buyer)]); ledgerOutLog('출고 수정 (재고현황 연동)','upd',{...ob,...np},ch); } }
+    }catch(e){ toast('수불부 출고 반영 실패: '+(e.code||e.message),5000); }
+  }
+  closeModal(); toast('저장되었습니다');
   const isoSum=`${pname(o.product)} · ${o.tankNo||'ISO'} · ${fmt(o.qtyKg)} kg`;
   if(id){ const ch=diffObj(old,o); if(ch.length) logHistory({action:'ISO 수정',kind:'upd',col:COL.isos,docId:id,product:o.product,summary:isoSum,changes:ch}); }
   else logHistory({action:'ISO 직접 등록',kind:'add',col:COL.isos,docId:o.id,product:o.product,summary:isoSum});
@@ -811,20 +975,38 @@ function isoShip(id){
   const i=state.isos.find(x=>x.id===id);
   openModal(`<h3>ISO 출하 처리 — ${esc(pname(i.product))} ${esc(i.tankNo)} (${fmt(i.qtyKg)} kg)</h3>
   <div class="form-grid"><div class="fld"><label>출하일</label><input type="date" id="s_date" value="${today()}"></div>
-  <div class="fld"><label>고객</label><input type="text" id="s_cust" value="${esc(i.customer)}"></div>
-  <div class="fld"><label>JNFAM Lot</label><input type="text" id="s_jl" value="${esc(i.jnfamLot)}"></div></div>
+  <div class="fld"><label>고객 <span class="help">· 필수</span></label><input type="text" id="s_cust" list="s_custList" value="${esc(i.customer)}" oninput="app.syncPrice('s')">${custList('s_custList',state.isos.map(x=>x.customer).filter(Boolean))}</div>
+  <div class="fld"><label>JNFAM Lot</label><input type="text" id="s_jl" value="${esc(i.jnfamLot)}"></div>
+  <div class="fld full">${syncBox('s',i.product,{pack:'ISO'})}</div></div>
   <div class="modal-actions"><button class="btn ghost" onclick="app.closeModal()">취소</button><button class="btn green" onclick="app.doIsoShip('${id}')">출하 완료</button></div>`);
+  syncCtx={k:i.product,qty:i.qtyKg}; syncPrice('s');
 }
 async function doIsoShip(id){
   const i={...(state.isos.find(x=>x.id===id)||{})};
   const patch={status:'출하완료',shipDate:$('s_date').value||today(),customer:$('s_cust').value.trim(),jnfamLot:$('s_jl').value.trim()};
-  await dbPatch(COL.isos,id,patch); closeModal(); toast('ISO 출하 처리되었습니다');
+  if(!patch.customer){ toast('고객을 입력하세요 (수불부 판매처로 등록됩니다)'); $('s_cust').focus(); return; }
+  const doSync=!!fb&&!!ledgerKey(i.product)&&!!$('s_sync')&&$('s_sync').checked&&!outExists(i.outboundId);
+  let orec=null;
+  if(doSync){
+    const price=+$('s_price').value||0;
+    if(!price&&!confirm('단가가 비어 있습니다. 수불부에 금액 $0으로 등록할까요?')) return;
+    orec=outRec({k:i.product,date:patch.shipDate,buyer:patch.customer,pack:$('s_pack').value,qty:i.qtyKg,price,note:[patch.jnfamLot,i.tankNo].filter(Boolean).join(' / '),isoId:id});
+    const invOnly=[{t:'patch',col:COL.isos,id,data:{...patch}}];
+    const ok=await batchWithOut([{t:'patch',col:COL.isos,id,data:{...patch,outboundId:orec.id}},{t:'set',col:COL.out,data:orec},...buyerOps(patch.customer)],invOnly);
+    if(ok===null) return; if(!ok) orec=null;
+  } else await dbPatch(COL.isos,id,patch);
+  if(orec) ledgerOutLog('출고 등록 (재고현황 연동)','add',orec);
+  closeModal(); toast(orec?'ISO 출하 처리 — 수불부 출고도 등록되었습니다':'ISO 출하 처리되었습니다');
   logHistory({action:'ISO 출하',kind:'out',col:COL.isos,docId:id,product:i.product,summary:`${pname(i.product)} · ${i.tankNo||'ISO'} · ${fmt(i.qtyKg)} kg → ${patch.customer||'-'} · ${patch.shipDate}`,changes:diffObj(i,patch)});
 }
 async function delIso(id){
   const i=state.isos.find(x=>x.id===id); const n=(i.sourceUsageIds||[]).length;
-  if(!confirm(n?`이 ISO를 삭제하면 연결된 IBC 충전 기록 ${n}건도 삭제되어 IBC 재고가 복원됩니다. 계속할까요?`:'이 ISO를 삭제할까요?')) return;
-  await dbBatch([{t:'del',col:COL.isos,id},...(i.sourceUsageIds||[]).map(u=>({t:'del',col:COL.usage,id:u}))]); closeModal(); toast('삭제되었습니다');
+  const ob=outExists(i.outboundId)?state.outbound.find(x=>x.id===i.outboundId):null;
+  if(!confirm((n?`이 ISO를 삭제하면 연결된 IBC 충전 기록 ${n}건도 삭제되어 IBC 재고가 복원됩니다. 계속할까요?`:'이 ISO를 삭제할까요?')+(ob?'\n연결된 수불부 출고도 함께 삭제됩니다.':''))) return;
+  try{ await dbBatch([{t:'del',col:COL.isos,id},...(i.sourceUsageIds||[]).map(u=>({t:'del',col:COL.usage,id:u})),...(ob?[{t:'del',col:COL.out,id:ob.id}]:[])]); }
+  catch(e){ toast('삭제 실패: '+(e.code||e.message),5000); return; }
+  if(ob) ledgerOutLog('출고 삭제 (재고현황 연동)','del',ob);
+  closeModal(); toast('삭제되었습니다');
   logHistory({action:'ISO 삭제',kind:'del',col:COL.isos,docId:id,product:i.product,summary:`${pname(i.product)} · ${i.tankNo||'ISO'} · ${fmt(i.qtyKg)} kg${n?` · 충전기록 ${n}건 함께 삭제(IBC 복원)`:''}`});
 }
 
@@ -985,7 +1167,7 @@ function vSettings(){
     <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" onclick="app.importSeed()">엑셀 데이터 가져오기</button>
     ${state.lots.some(l=>l.createdBy==='excel-import')?`<button class="btn danger" onclick="app.removeSeed()">이관 데이터 삭제</button>`:''}</div></div>
   <div class="panel"><h3>⬇ 내보내기</h3><div class="help">전체 Lot·사용 기록·ISO를 엑셀 파일로 저장합니다 (백업·보고용).</div><div style="margin-top:12px"><button class="btn ghost" onclick="app.exportExcel()">엑셀로 내보내기</button></div>
-    <h3 style="margin-top:18px">연결 정보</h3><div class="help">Firebase 프로젝트: <code>${FB_CFG.projectId}</code> (수불부와 공유)<br>컬렉션: <code>inv_products</code> <code>inv_lots</code> <code>inv_usage</code> <code>inv_isos</code> <code>inv_snapshots</code> <code>inv_history</code> · 수불부 <code>inbound</code> <code>history</code><br><b>변경 이력 규칙</b>: <code>match /inv_history/{id} { allow read, create: if &lt;기존 조건&gt;; allow update, delete: if false; }</code><br>사용자: ${esc(who()||'-')}</div></div>
+    <h3 style="margin-top:18px">연결 정보</h3><div class="help">Firebase 프로젝트: <code>${FB_CFG.projectId}</code> (수불부와 공유)<br>컬렉션: <code>inv_products</code> <code>inv_lots</code> <code>inv_usage</code> <code>inv_isos</code> <code>inv_snapshots</code> <code>inv_history</code> · 수불부 <code>inbound</code> <code>outbound</code> <code>config</code> <code>history</code><br><b>출하 연동</b>: 출하·ISO 출하 등록 시 수불부 <code>outbound</code>(Goods Issue)에 자동 등록, 삭제·수정 시 함께 반영<br><b>변경 이력 규칙</b>: <code>match /inv_history/{id} { allow read, create: if &lt;기존 조건&gt;; allow update, delete: if false; }</code><br>사용자: ${esc(who()||'-')}</div></div>
   </div>`;
 }
 function prodModal(key){
@@ -1049,7 +1231,7 @@ function exportExcel(){
 
 /* ---------- 전역 노출 & 시작 ---------- */
 window.app={state,P,go,render,googleLogin,logout,closeModal,lotDetail,lotModal,lotCalc,saveLot,delLot,usageModal,uSet,uAddRow,uDel,uTypeChange,suggestLot,saveUsage,delUsage,
-  isoModal,saveIso,isoShip,doIsoShip,delIso,receiveModal,rvSet,rvAdd,rvDel,doReceive,prodModal,saveProd,importSeed,removeSeed,exportExcel,exportHistory,
+  isoModal,saveIso,isoShip,doIsoShip,delIso,syncPrice,syncAmt,linkModal,lkPick,doLink,receiveModal,rvSet,rvAdd,rvDel,doReceive,prodModal,saveProd,importSeed,removeSeed,exportExcel,exportHistory,
   hf:(k,v)=>{state.histF[k]=v;render();}, hfReset:()=>{state.histF={user:'',action:'',q:'',from:'',to:''};render();}, toggleHist:id=>{state.histOpen=state.histOpen===id?null:id;render();},
   setProd:k=>{state.prod=k;render();}, setChartF:(k,v)=>{state.chartF[k]=v;drawDashCharts();}, setStockFilter:v=>{state.stockFilter=v;render();}, setIsoF:v=>{state.isoF=v;render();}, uf:(k,v)=>{state.usageF[k]=v;render();}};
 
