@@ -481,6 +481,12 @@ const ledgerPending=()=>state.ledger.filter(r=>r.invType==='미착품'||r.invTyp
 const linkedLedgerIds=()=>new Set(state.lots.filter(l=>l.ledgerInboundId).map(l=>l.ledgerInboundId));
 /* 수불부에서 입고완료(상품) 처리됐지만 재고 Lot이 없는 건 — ledgerInboundId 또는 Invoice 일치 Lot이 있으면 등록된 것으로 봄 */
 const ARRIVE_FROM='2026-09-29';
+/* 부분 입고: 수불부 미착품 1건(예: 41,400kg = 컨테이너 2개)을 도착분만 Lot 등록 → 운송중 = 수불부 수량 − 입고된 Lot 합계 */
+const RECV_TOL=0.01; // ±1% 이내면 전량 입고로 판단
+const recvLots=r=>state.lots.filter(l=>l.ledgerInboundId===r.id);
+const recvKg=r=>recvLots(r).reduce((s,l)=>s+(+l.qtyIn||0),0);
+const remainKg=r=>Math.max(0,(+r.qty||0)-recvKg(r));
+const recvDone=r=>recvKg(r)>=(+r.qty||0)*(1-RECV_TOL);
 const normInv=v=>String(v||'').trim().toUpperCase();
 function arrivedNoLot(k){
   const linked=linkedLedgerIds(), invs=new Set(state.lots.map(l=>normInv(l.invoice)).filter(Boolean));
@@ -495,8 +501,8 @@ function stockOf(k){
   let ibc=0,hold=0,ea=0,cnt=0; lots.forEach(l=>{ const r=lotRem(l); if(r>0){ ibc+=r; cnt++; ea+=lotEA(l); if(l.hold) hold+=r; } });
   const isoT=state.isos.filter(i=>i.product===k&&i.status==='대기');
   const iso=isoT.reduce((s,i)=>s+(+i.qtyKg||0),0);
-  const tr=state.ledger.filter(r=>r.invType==='미착품'&&ledgerProd(r)===k);
-  const transit=tr.reduce((s,r)=>s+(+r.qty||0),0);
+  const tr=state.ledger.filter(r=>r.invType==='미착품'&&ledgerProd(r)===k&&remainKg(r)>0.5);
+  const transit=tr.reduce((s,r)=>s+remainKg(r),0);
   const pl=state.ledger.filter(r=>r.invType==='선적예정(미인식)'&&ledgerProd(r)===k);
   const planned=pl.reduce((s,r)=>s+(+r.qty||0),0);
   const from30=addDays(today(),-30);
@@ -1031,9 +1037,11 @@ function incTable(rows,compact){
   const linked=linkedLedgerIds();
   return `<div class="tbl-scroll"><table><thead><tr><th>구분</th><th>품목</th><th>INVOICE</th><th class="num">수량(kg)</th><th class="num">IBC(EA)</th><th>ETD</th><th>ETA(항구)</th><th>창고도착 예정</th><th>도착까지</th>${compact?'':'<th>비고</th>'}<th></th></tr></thead><tbody>
   ${rows.map(r=>{ const k=ledgerProd(r); const p=P(k); const arr=dstr(r.plantEta)||dstr(r.eta);
-    return `<tr><td>${r.invType==='미착품'?'<span class="tag amber">미착품 · 운송중</span>':'<span class="tag gray">선적예정</span>'}</td><td>${k?esc(p.name):`<span class="tag warn">${esc(r.item)} ${(+r.purity*100).toFixed(0)}% 미매핑</span>`}</td>
-    <td class="mono">${esc(r.invoice)}</td><td class="num">${fmt(r.qty)}</td><td class="num">${k&&p.ibcKg?fmt1(r.qty/p.ibcKg):''}</td><td>${dstr(r.etd)}</td><td>${dstr(r.eta)}</td><td>${dstr(r.plantEta)}</td><td>${dday(arr)}</td>${compact?'':`<td class="wrap">${esc(r.note)}</td>`}
-    <td>${k&&!linked.has(r.id)&&r.invType==='미착품'?`<button class="btn green sm" onclick="app.receiveModal('${r.id}')">입고 등록</button>`:linked.has(r.id)?'<span class="tag ok">등록됨</span>':''}</td></tr>`; }).join('')||`<tr><td colspan="${compact?10:11}" class="empty">입고 예정 없음</td></tr>`}
+    return `<tr><td>${r.invType==='미착품'?(recvKg(r)>0?(recvDone(r)?'<span class="tag ok">도착 완료 · 전환 대기</span>':'<span class="tag amber">부분 도착 · 일부 운송중</span>'):'<span class="tag amber">미착품 · 운송중</span>'):'<span class="tag gray">선적예정</span>'}</td><td>${k?esc(p.name):`<span class="tag warn">${esc(r.item)} ${(+r.purity*100).toFixed(0)}% 미매핑</span>`}</td>
+    <td class="mono">${esc(r.invoice)}</td><td class="num">${(()=>{ const rc=recvKg(r); return rc>0?`${fmt(r.qty)}<div class="help" style="white-space:nowrap">입고 ${fmt(rc)} · 남음 <b>${fmt(remainKg(r))}</b></div>`:fmt(r.qty); })()}</td><td class="num">${k&&p.ibcKg?fmt1(remainKg(r)/p.ibcKg):''}</td><td>${dstr(r.etd)}</td><td>${dstr(r.eta)}</td><td>${dstr(r.plantEta)}</td><td>${dday(arr)}</td>${compact?'':`<td class="wrap">${esc(r.note)}</td>`}
+    <td>${!k?'':r.invType==='미착품'?(recvDone(r)?`<span class="tag ok">전량 입고</span> <button class="btn primary sm" onclick="app.convertLedger('${r.id}')">수불부 상품 전환</button>`
+      :`${recvKg(r)>0?`<span class="tag blue">부분 입고 ${Math.round(recvKg(r)/(+r.qty||1)*100)}%</span> `:''}<button class="btn green sm" onclick="app.receiveModal('${r.id}')">${recvKg(r)>0?'추가 입고':'입고 등록'}</button>`)
+      :linked.has(r.id)?'<span class="tag ok">등록됨</span>':''}</td></tr>`; }).join('')||`<tr><td colspan="${compact?10:11}" class="empty">입고 예정 없음</td></tr>`}
   </tbody></table></div>`;
 }
 function vIncoming(){
@@ -1053,12 +1061,15 @@ function vIncoming(){
 let rvRows=[], rvLedgerId=null;
 function receiveModal(ledgerId){
   const r=state.ledger.find(x=>x.id===ledgerId); if(!r) return; rvLedgerId=ledgerId; const k=ledgerProd(r); const p=P(k);
-  const perLot=(p.ibcKg||1)*18; const n=Math.max(1,Math.round((+r.qty||0)/perLot));
-  const base=Math.floor((+r.qty||0)/n);
-  rvRows=Array.from({length:n},(_,i)=>({lot:'',ea:+((i<n-1?base:(+r.qty-base*(n-1)))/(p.ibcKg||1)).toFixed(2),unit:p.ibcKg}));
+  const got=recvLots(r), gotKg=recvKg(r), rem=r.invType==='상품'?(+r.qty||0)-gotKg:remainKg(r), remQ=Math.max(0,rem);
+  const perLot=(p.ibcKg||1)*18; const n=Math.max(1,Math.round(remQ/perLot));
+  const base=Math.floor(remQ/n);
+  rvRows=Array.from({length:n},(_,i)=>({lot:'',ea:+((i<n-1?base:(remQ-base*(n-1)))/(p.ibcKg||1)).toFixed(2),unit:p.ibcKg}));
   const d=dstr(r.plantEta)||today();
   openModal(`<h3>📥 입고 등록 — ${esc(p.name)} · ${esc(r.invoice||'')}</h3>
-  <div class="calc-box" style="margin-bottom:12px"><span>수불부 수량 <b>${fmt(r.qty)} kg</b></span><span>ETD <b>${dstr(r.etd)||'-'}</b></span><span>ETA <b>${dstr(r.eta)||'-'}</b></span><span>구분 <b>${esc(r.invType)}</b></span></div>
+  <div class="calc-box" style="margin-bottom:12px"><span>수불부 수량 <b>${fmt(r.qty)} kg</b></span>${gotKg>0?`<span>이미 입고 <b>${fmt(gotKg)} kg</b> (${got.length} Lot)</span><span>남은 수량 <b>${fmt(remQ)} kg</b></span>`:''}<span>ETD <b>${dstr(r.etd)||'-'}</b></span><span>ETA <b>${dstr(r.eta)||'-'}</b></span><span>구분 <b>${esc(r.invType)}</b></span></div>
+  ${gotKg>0?`<div class="help" style="margin-bottom:10px">기입고 Lot: ${got.map(l=>`${esc(l.sourceLot)} ${fmt(l.qtyIn)}kg (${dstr(l.receivedDate)})`).join(', ')}</div>`:''}
+  ${r.invType==='미착품'?`<div class="banner blue" style="margin-bottom:12px">컨테이너 일부만 도착했으면 <b>도착한 Lot만</b> 입력하세요. 수불부는 미착품으로 유지되고 남은 수량은 운송중으로 계속 표시됩니다. 누적 입고가 수불부 수량(±1%)에 도달하면 수불부 상품 전환을 물어봅니다.</div>`:''}
   <div class="form-grid">
     <div class="fld"><label>창고 입고일 *</label><input type="date" id="rv_date" value="${d}"></div>
     <div class="fld"><label>MFG Date</label><input type="date" id="rv_mfg"></div>
@@ -1072,7 +1083,6 @@ function receiveModal(ledgerId){
   <table class="split-tbl"><thead><tr><th>Lot # (From source) *</th><th style="width:110px">EA</th><th style="width:120px">kg/EA</th><th class="num" style="width:120px">kg</th><th></th></tr></thead><tbody id="rv_rows"></tbody></table>
   <div style="margin-top:8px"><button class="btn ghost sm" onclick="app.rvAdd()">＋ Lot 추가</button></div>
   <div class="calc-box" style="margin-top:12px" id="rv_sum"></div>
-  ${r.invType!=='상품'?`<div class="fld" style="margin-top:14px"><div class="chk" style="background:var(--amber-l);padding:10px 12px;border-radius:8px"><input type="checkbox" id="rv_conv" checked><span><b>수불부에도 입고완료 처리</b> — 미착품(05) → 상품(04) 전환, 창고입고일(Plant ETA)을 위 입고일로 기록</span></div></div>`:''}
   <div class="modal-actions"><button class="btn ghost" onclick="app.closeModal()">취소</button><button class="btn green" onclick="app.doReceive('${ledgerId}')">✓ 입고 등록</button></div>`,true);
   rvRender();
 }
@@ -1086,8 +1096,9 @@ function rvSet(i,f,v){ rvRows[i][f]=f==='lot'?v:(+v||0); if(f!=='lot'){ $('rv_kg
 function rvAdd(){ const u=rvRows[0]?rvRows[0].unit:1; rvRows.push({lot:'',ea:0,unit:u}); rvRender(); }
 function rvDel(i){ rvRows.splice(i,1); rvRender(); }
 function rvSum(){ const el=$('rv_sum'); if(!el) return; const r=state.ledger.find(x=>x.id===rvLedgerId)||{qty:0};
-  const tot=rvRows.reduce((s,x)=>s+x.ea*x.unit,0); const diff=tot-(+r.qty||0);
-  el.innerHTML=`<span>Lot 합계 <b>${fmt(tot)} kg</b> (${fmt1(rvRows.reduce((s,x)=>s+x.ea,0))} EA)</span><span>수불부 대비 <b class="${Math.abs(diff)<1?'good':'bad'}">${diff>=0?'+':''}${fmt(diff)} kg</b></span>${Math.abs(diff)>=1?'<span class="help">차이가 있으면 실제 입고량 기준으로 저장됩니다 (수불부 수량은 변경하지 않음)</span>':''}`; }
+  const tot=rvRows.reduce((s,x)=>s+x.ea*x.unit,0); const got=r.id?recvKg(r):0; const cum=got+tot, q=+r.qty||0; const done=cum>=q*(1-RECV_TOL); const diff=cum-q;
+  el.innerHTML=`<span>이번 입고 <b>${fmt(tot)} kg</b> (${fmt1(rvRows.reduce((s,x)=>s+x.ea,0))} EA)</span>${got?`<span>누적 <b>${fmt(cum)} kg</b></span>`:''}<span>수불부 ${fmt(q)} kg 대비 <b class="${done?'good':'bad'}">${diff>=0?'+':''}${fmt(diff)} kg</b></span>`
+    +(r.invType==='미착품'?(done?'<span class="good"><b>✓ 전량 입고</b> — 저장 후 수불부 상품 전환 여부를 묻습니다</span>':`<span class="help">부분 입고 — 수불부는 미착품 유지, 남은 ${fmt(Math.max(0,q-cum))} kg 운송중</span>`):''); }
 function ledgerCode(r,type){ const pre={'상품':'04','미착품':'05','선적예정(미인식)':'00'}[type]||'04';
   const ab={HF:'HF',HNO3:'HN',HCl:'HCl',H2SO4:'H2S'}[r.item]||r.item; const sup=r.supplier==='JNF CO.,LTD.'?'JNF':(r.supplier||'').replace(/[^A-Za-z0-9]/g,'').slice(0,8);
   return pre+ab+(r.pack||'')+sup+(Number(r.purity)*100).toFixed(2)+'%'; }
@@ -1102,20 +1113,31 @@ async function doReceive(ledgerId){
   const shelf=$('rv_shelf').value||addDays(d,364);
   const ops=rows.map(x=>({t:'set',col:COL.lots,data:{id:uid('lo'),product:k,receivedDate:d,sourceLot:x.lot.trim(),container:$('rv_cont').value,unitKg:x.unit,qtyIn:Math.round(x.ea*x.unit*100)/100,
     location:$('rv_loc').value.trim()||'창고',mfgDate:$('rv_mfg').value,shelfLife:shelf,coa:$('rv_coa').checked,hold:false,note:$('rv_note').value.trim(),jnfamLots:'',invoice:(r.invoice||'').trim(),ledgerInboundId:r.id}}));
-  const conv=$('rv_conv')&&$('rv_conv').checked;
+  const tot=rows.reduce((s,x)=>s+x.ea*x.unit,0), before=recvKg(r), cum=before+tot, q=+r.qty||0, done=cum>=q*(1-RECV_TOL);
+  if(cum>q*(1+RECV_TOL)&&!confirm(`누적 입고 ${fmt(cum)} kg이 수불부 수량 ${fmt(q)} kg보다 많습니다. 그래도 저장할까요?`)) return;
   try{
     await dbBatch(ops);
-    if(conv){
-      await dbPatch(COL.ledger,r.id,{invType:'상품',plantEta:d,convert:{prevCode:ledgerCode(r,r.invType),date:today(),note:'재고현황 시스템에서 입고 등록'},note:(r.note?r.note+' / ':'')+'미착품 전환 '+today()});
-    }
-    closeModal(); toast(`입고 등록 완료 (${rows.length} Lot)${conv?' · 수불부 상품 전환 완료':''}`);
-    const tot=rows.reduce((s,x)=>s+x.ea*x.unit,0);
-    logHistory({action:'입고 등록',kind:'add',col:COL.lots,docId:ops[0].data.id,product:k,
-      summary:`${pname(k)} · ${fmt(tot)} kg · ${rows.length} Lot (${rows.map(x=>x.lot.trim()).join(', ')}) · ${(r.invoice||'').trim()||'-'} · 입고일 ${d}${conv?' · 수불부 05→04 전환':''}`});
-    if(conv) logHistory({action:'입고완료(05→04)',kind:'cv',col:'inbound',docId:r.id,
-      summary:`${ledgerCode(r,'상품')} · ${fmt(r.qty)} kg${r.invoice?' · '+String(r.invoice).trim():''} (재고현황 시스템)`,
-      changes:[{f:'invType',label:'재고구분',from:r.invType,to:'상품'},{f:'plantEta',label:'창고입고일',from:dstr(r.plantEta)||'(빈값)',to:d}]}, COL.ledgerHist);
+    closeModal();
+    logHistory({action:before>0||(!done&&r.invType==='미착품')?'부분 입고 등록':'입고 등록',kind:'add',col:COL.lots,docId:ops[0].data.id,product:k,
+      summary:`${pname(k)} · ${fmt(tot)} kg · ${rows.length} Lot (${rows.map(x=>x.lot.trim()).join(', ')}) · ${(r.invoice||'').trim()||'-'} · 입고일 ${d} · 누적 ${fmt(cum)}/${fmt(q)} kg`});
+    if(r.invType==='미착품'&&done){
+      if(confirm(`전량 입고되었습니다 (누적 ${fmt(cum)} / 수불부 ${fmt(q)} kg).\n수불부 미착품(05) → 상품(04)으로 전환할까요?\n창고입고일: ${d}`)){ await convertLedger(r.id,d,true); return; }
+      toast('입고 등록 완료 — 수불부 전환은 입고 예정 목록의 “수불부 상품 전환”으로 할 수 있습니다',5000);
+    } else toast(r.invType==='미착품'?`부분 입고 등록 (${fmt(cum)} / ${fmt(q)} kg) — 남은 ${fmt(Math.max(0,q-cum))} kg은 운송중으로 유지`:`입고 등록 완료 (${rows.length} Lot)`,4500);
   }catch(e){ console.error(e); toast('저장 실패: '+(e.code||e.message),5000); }
+}
+/* 수불부 미착품 → 상품 전환 (전량 입고 후) */
+async function convertLedger(ledgerId,date,skipConfirm){
+  const r=state.ledger.find(x=>x.id===ledgerId); if(!r||r.invType==='상품') return;
+  const d=date||recvLots(r).map(l=>dstr(l.receivedDate)).sort().pop()||today();
+  if(!skipConfirm&&!confirm(`수불부 ${(r.invoice||'').trim()} (${fmt(r.qty)} kg)을 미착품(05) → 상품(04)으로 전환할까요?\n누적 입고 ${fmt(recvKg(r))} kg · 창고입고일 ${d}`)) return;
+  try{
+    await dbPatch(COL.ledger,r.id,{invType:'상품',plantEta:d,convert:{prevCode:ledgerCode(r,r.invType),date:today(),note:'재고현황 시스템에서 입고 등록'+(recvLots(r).length>1?' (분할 입고)':'')},note:(r.note?r.note+' / ':'')+'미착품 전환 '+today()});
+    logHistory({action:'입고완료(05→04)',kind:'cv',col:'inbound',docId:r.id,
+      summary:`${ledgerCode(r,'상품')} · ${fmt(r.qty)} kg${r.invoice?' · '+String(r.invoice).trim():''} (재고현황 시스템 · 누적 입고 ${fmt(recvKg(r))} kg)`,
+      changes:[{f:'invType',label:'재고구분',from:r.invType,to:'상품'},{f:'plantEta',label:'창고입고일',from:dstr(r.plantEta)||'(빈값)',to:d}]}, COL.ledgerHist);
+    toast('수불부 상품 전환 완료');
+  }catch(e){ toast('수불부 전환 실패: '+(e.code||e.message),5000); }
 }
 
 /* ---------- 최근 업데이트 & 변경 이력 ---------- */
@@ -1245,7 +1267,7 @@ function exportExcel(){
 }
 
 /* ---------- 전역 노출 & 시작 ---------- */
-window.app={state,P,go,render,googleLogin,logout,closeModal,lotDetail,lotModal,lotCalc,saveLot,delLot,usageModal,uSet,uAddRow,uDel,uTypeChange,suggestLot,saveUsage,delUsage,
+window.app={convertLedger,state,P,go,render,googleLogin,logout,closeModal,lotDetail,lotModal,lotCalc,saveLot,delLot,usageModal,uSet,uAddRow,uDel,uTypeChange,suggestLot,saveUsage,delUsage,
   isoModal,saveIso,isoShip,doIsoShip,delIso,syncPrice,syncAmt,linkModal,lkPick,doLink,receiveModal,rvSet,rvAdd,rvDel,doReceive,prodModal,saveProd,importSeed,removeSeed,exportExcel,exportHistory,
   hf:(k,v)=>{state.histF[k]=v;render();}, hfReset:()=>{state.histF={user:'',action:'',q:'',from:'',to:''};render();}, toggleHist:id=>{state.histOpen=state.histOpen===id?null:id;render();},
   setProd:k=>{state.prod=k;render();}, setChartF:(k,v)=>{state.chartF[k]=v;drawDashCharts();}, setStockFilter:v=>{state.stockFilter=v;render();}, setIsoF:v=>{state.isoF=v;render();}, uf:(k,v)=>{state.usageF[k]=v;render();}};
