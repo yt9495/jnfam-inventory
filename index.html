@@ -480,11 +480,14 @@ async function batchWithOut(ops,onlyInvOps){
 const ledgerPending=()=>state.ledger.filter(r=>r.invType==='미착품'||r.invType==='선적예정(미인식)');
 const linkedLedgerIds=()=>new Set(state.lots.filter(l=>l.ledgerInboundId).map(l=>l.ledgerInboundId));
 /* 수불부에서 입고완료(상품) 처리됐지만 재고 Lot이 없는 건 — ledgerInboundId 또는 Invoice 일치 Lot이 있으면 등록된 것으로 봄 */
+const ARRIVE_FROM='2026-09-29';
 const normInv=v=>String(v||'').trim().toUpperCase();
 function arrivedNoLot(k){
-  const linked=linkedLedgerIds(), invs=new Set(state.lots.map(l=>normInv(l.invoice)).filter(Boolean)), from=addDays(today(),-90);
+  const linked=linkedLedgerIds(), invs=new Set(state.lots.map(l=>normInv(l.invoice)).filter(Boolean));
+  /* 2026-09-29 이전 입고분은 엑셀/수동으로 Lot이 이미 등록됨 → 이후 수불부 전환분만 대상 */
+  const cvd=r=>dstr(r.convert&&r.convert.date)||dstr(r.plantEta)||'';
   return state.ledger.filter(r=>r.invType==='상품'&&ledgerProd(r)&&(!k||ledgerProd(r)===k)&&!linked.has(r.id)&&!(r.invoice&&invs.has(normInv(r.invoice)))
-    &&((dstr(r.plantEta)||'')>=from||(r.convert&&(dstr(r.convert.date)||'')>=from)))
+    &&cvd(r)>=ARRIVE_FROM)
     .sort((a,b)=>(dstr(b.plantEta)||'').localeCompare(dstr(a.plantEta)||''));
 }
 function stockOf(k){
@@ -1042,7 +1045,7 @@ function vIncoming(){
   <div class="page-sub">수불부의 <b>미착품(05·운송중)</b>과 <b>선적예정(00)</b>을 실시간으로 보여줍니다. 창고 도착 후 <b>입고 등록</b>을 누르면 Lot이 생성되고, 선택 시 수불부의 미착품도 상품(04)으로 전환됩니다.</div>
   ${unm.length?`<div class="banner">⚠ 품목 매핑이 없는 수불부 품목: ${esc(unm.join(', '))} — [설정]에서 품목의 “수불부 품목/농도”를 지정하세요.</div>`:''}
   <div class="panel"><h3>🚢 운송 중 · 선적 예정</h3>${incTable(inc,false)}</div>
-  <div class="panel"><h3>📥 수불부에서 이미 입고완료(상품) 처리됐지만 재고 Lot이 없는 건 <span class="help">(최근 90일 · 같은 Invoice Lot이 있으면 제외)</span></h3>
+  <div class="panel"><h3>📥 수불부에서 이미 입고완료(상품) 처리됐지만 재고 Lot이 없는 건 <span class="help">(2026-09-29 이후 수불부 전환분 · 같은 Invoice Lot이 있으면 제외)</span></h3>
     <div class="help" style="margin-bottom:8px">수불부에서 먼저 “입고완료”를 누른 경우 여기서 Lot만 등록하면 됩니다. 등록 전까지는 대시보드 창고 재고에 “Lot 미등록”으로 포함됩니다.</div>
     ${recentGoods.length?`<div class="tbl-scroll"><table><thead><tr><th>품목</th><th>INVOICE</th><th class="num">수량(kg)</th><th>창고입고일</th><th></th></tr></thead><tbody>${recentGoods.map(r=>`<tr><td>${esc(pname(ledgerProd(r)))}</td><td class="mono">${esc(r.invoice)}</td><td class="num">${fmt(r.qty)}</td><td>${dstr(r.plantEta)}</td><td><button class="btn ghost sm" onclick="app.receiveModal('${r.id}')">Lot 등록</button></td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">없음</div>'}
   </div>`;
