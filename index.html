@@ -479,6 +479,14 @@ async function batchWithOut(ops,onlyInvOps){
 }
 const ledgerPending=()=>state.ledger.filter(r=>r.invType==='미착품'||r.invType==='선적예정(미인식)');
 const linkedLedgerIds=()=>new Set(state.lots.filter(l=>l.ledgerInboundId).map(l=>l.ledgerInboundId));
+/* 수불부에서 입고완료(상품) 처리됐지만 재고 Lot이 없는 건 — ledgerInboundId 또는 Invoice 일치 Lot이 있으면 등록된 것으로 봄 */
+const normInv=v=>String(v||'').trim().toUpperCase();
+function arrivedNoLot(k){
+  const linked=linkedLedgerIds(), invs=new Set(state.lots.map(l=>normInv(l.invoice)).filter(Boolean)), from=addDays(today(),-90);
+  return state.ledger.filter(r=>r.invType==='상품'&&ledgerProd(r)&&(!k||ledgerProd(r)===k)&&!linked.has(r.id)&&!(r.invoice&&invs.has(normInv(r.invoice)))
+    &&((dstr(r.plantEta)||'')>=from||(r.convert&&(dstr(r.convert.date)||'')>=from)))
+    .sort((a,b)=>(dstr(b.plantEta)||'').localeCompare(dstr(a.plantEta)||''));
+}
 function stockOf(k){
   const lots=state.lots.filter(l=>l.product===k);
   let ibc=0,hold=0,ea=0,cnt=0; lots.forEach(l=>{ const r=lotRem(l); if(r>0){ ibc+=r; cnt++; ea+=lotEA(l); if(l.hold) hold+=r; } });
@@ -491,9 +499,10 @@ function stockOf(k){
   const from30=addDays(today(),-30);
   const out30=state.usage.filter(u=>u.product===k&&u.type==='출하'&&dstr(u.date)>=from30&&dstr(u.date)<=today()).reduce((s,u)=>s+(+u.qtyKg||0),0)
     + state.isos.filter(i=>i.product===k&&i.status==='출하완료'&&dstr(i.shipDate)>=from30&&dstr(i.shipDate)<=today()).reduce((s,i)=>s+(+i.qtyKg||0),0);
-  const onHand=ibc+iso;
+  const arrR=arrivedNoLot(k), arrived=arrR.reduce((s,r)=>s+(+r.qty||0),0);
+  const onHand=ibc+iso+arrived;
   const daily=out30/30; const cover=daily>0?onHand/daily:null;
-  return {ibc,hold,ea,cnt,iso,isoCnt:isoT.length,transit,trCnt:tr.length,planned,plCnt:pl.length,onHand,total:ibc+iso+transit,out30,cover};
+  return {ibc,hold,ea,cnt,iso,isoCnt:isoT.length,transit,trCnt:tr.length,planned,plCnt:pl.length,arrived,arrCnt:arrR.length,onHand,total:onHand+transit,out30,cover};
 }
 function nextJnfamLot(k,date){
   const pre=P(k).lotPrefix||'JA'; const ymd=(date||today()).slice(2).replace(/-/g,'');
@@ -506,8 +515,8 @@ function nextJnfamLot(k,date){
 function render(){
   _remCache=null;
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.toggle('active',n.dataset.view===state.view));
-  const linked=linkedLedgerIds(); const nInc=ledgerPending().filter(r=>ledgerProd(r)).length;
-  const b=$('incBadge'); b.style.display=nInc?'inline':'none'; b.textContent=nInc;
+  const nArr=state.ledger.length?arrivedNoLot().length:0; const nInc=ledgerPending().filter(r=>ledgerProd(r)).length;
+  const b=$('incBadge'); b.style.display=(nInc||nArr)?'inline':'none'; b.textContent=nArr?`${nInc} · 미등록 ${nArr}`:nInc; b.style.background=nArr?'var(--red)':''; b.title=nArr?'수불부 입고완료 · Lot 미등록 건 있음':'';
   if(!state.prod && state.products.length) state.prod=products()[0].key;
   Object.values(charts).forEach(c=>{try{c.destroy();}catch(e){}}); charts={};
   const v=state.view;
@@ -542,9 +551,11 @@ function vDashboard(){
   <h2 class="page-title">재고 대시보드</h2>
   <div class="page-sub">기준일 ${t} · 창고 재고 = IBC(Drum 포함) + ISO 대기 · 합계 = 창고 재고 + 운송중(수불부 미착품) ${state.ledgerErr?'<span class="tag warn">'+esc(state.ledgerErr)+'</span>':''} ${DEMO?'<span class="tag amber">DEMO 모드 (저장 안 됨)</span>':''}</div>
   ${recentPanel()}
+  ${(()=>{ const a=arrivedNoLot(); return a.length?`<div class="banner" style="background:var(--amber-l);border:1px solid #f59e0b"><b>📥 수불부에서 입고완료 처리됐지만 재고 Lot이 없는 건 ${a.length}건</b> — 창고 재고에는 “Lot 미등록”으로 포함되어 있습니다. Lot 번호·IBC 수량을 등록해 주세요.
+    <div style="margin-top:8px;display:flex;flex-direction:column;gap:6px">${a.map(r=>`<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span><b>${esc(pname(ledgerProd(r)))}</b> · ${esc(r.invoice||'-')} · ${fmt(r.qty)} kg · 창고입고 ${dstr(r.plantEta)||'-'}${r.updatedBy?` · ${esc(String(r.updatedBy).split('@')[0])}`:''}</span><button class="btn green sm" onclick="app.receiveModal('${r.id}')">Lot 등록</button></div>`).join('')}</div></div>`:''; })()}
   ${low.length?`<div class="banner red">⚠️ 최소 재고 미달: ${low.map(p=>`<b>${esc(p.name)}</b> (${ton(S[p.key].onHand)}t / 기준 ${ton(p.minStock)}t)`).join(', ')}</div>`:''}
   <div class="cards">
-    <div class="kpi b-blue"><div class="k-label">창고 재고 (IBC+ISO)</div><div class="k-value">${ton(tot('onHand'))} t</div><div class="k-sub">IBC ${fmt(tot('ibc'))} kg (${fmt1(tot('ea'))} EA) · ISO ${fmt(tot('iso'))} kg</div></div>
+    <div class="kpi b-blue"><div class="k-label">창고 재고 (IBC+ISO)</div><div class="k-value">${ton(tot('onHand'))} t</div><div class="k-sub">IBC ${fmt(tot('ibc'))} kg (${fmt1(tot('ea'))} EA) · ISO ${fmt(tot('iso'))} kg${tot('arrived')?` · <b style="color:var(--amber)">Lot 미등록 ${fmt(tot('arrived'))} kg</b>`:''}</div></div>
     <div class="kpi b-purple"><div class="k-label">ISO 대기</div><div class="k-value">${ton(tot('iso'))} t</div><div class="k-sub">${ps.reduce((s,p)=>s+S[p.key].isoCnt,0)} 탱크</div></div>
     <div class="kpi b-amber"><div class="k-label">운송 중 (미착품)</div><div class="k-value">${ton(tot('transit'))} t</div><div class="k-sub">${ps.reduce((s,p)=>s+S[p.key].trCnt,0)}건 · 선적예정 ${ton(tot('planned'))} t 별도</div></div>
     <div class="kpi b-green"><div class="k-label">합계 (창고+운송)</div><div class="k-value">${ton(tot('total'))} t</div><div class="k-sub">${fmt(tot('total'))} kg</div></div>
@@ -584,6 +595,7 @@ function pcard(p,s){
     <div class="row"><span><i class="dotc" style="background:${COLORS.ibc}"></i>IBC</span><span class="v">${fmt(s.ibc)} kg · ${fmt1(s.ea)} EA</span></div>
     <div class="row"><span><i class="dotc" style="background:${COLORS.iso}"></i>ISO 대기</span><span class="v">${fmt(s.iso)} kg · ${s.isoCnt}</span></div>
     ${s.hold?`<div class="row"><span>└ Hold</span><span class="v" style="color:var(--red)">${fmt(s.hold)} kg</span></div>`:''}
+    ${s.arrived?`<div class="row"><span>도착 · Lot 미등록</span><span class="v" style="color:var(--amber)">${fmt(s.arrived)} kg · ${s.arrCnt}건</span></div>`:''}
     <div class="row pc-sep"><span><i class="dotc" style="background:${COLORS.transit}"></i>운송중</span><span class="v">${fmt(s.transit)} kg · ${s.trCnt}건</span></div>
     <div class="row pc-grand"><span>합계 (창고+운송)</span><span class="v">${fmt(s.total)} kg</span></div>
     <div class="row pc-sep"><span>최근 30일 출하</span><span class="v">${fmt(s.out30)} kg${s.cover!=null?` · <span class="${s.cover<30?'d-late':s.cover<60?'d-soon':'d-ok'}">${Math.round(s.cover)}일분</span>`:''}</span></div>
@@ -1024,14 +1036,14 @@ function incTable(rows,compact){
 function vIncoming(){
   const inc=ledgerPending().sort((a,b)=>(dstr(a.plantEta)||dstr(a.eta)||'9').localeCompare(dstr(b.plantEta)||dstr(b.eta)||'9'));
   const linked=linkedLedgerIds(); const from=addDays(today(),-45);
-  const recentGoods=state.ledger.filter(r=>r.invType==='상품'&&ledgerProd(r)&&!linked.has(r.id)&&dstr(r.plantEta)>=from).sort((a,b)=>dstr(b.plantEta).localeCompare(dstr(a.plantEta)));
+  const recentGoods=arrivedNoLot();
   const unm=[...new Set(state.ledger.filter(r=>!ledgerProd(r)).map(r=>r.item+' '+(+r.purity*100).toFixed(0)+'%'))];
   return `<h2 class="page-title">입고 예정 <span style="font-size:13px;color:var(--sub);font-weight:400">· JNFAM 수불부 미착품 연동</span></h2>
   <div class="page-sub">수불부의 <b>미착품(05·운송중)</b>과 <b>선적예정(00)</b>을 실시간으로 보여줍니다. 창고 도착 후 <b>입고 등록</b>을 누르면 Lot이 생성되고, 선택 시 수불부의 미착품도 상품(04)으로 전환됩니다.</div>
   ${unm.length?`<div class="banner">⚠ 품목 매핑이 없는 수불부 품목: ${esc(unm.join(', '))} — [설정]에서 품목의 “수불부 품목/농도”를 지정하세요.</div>`:''}
   <div class="panel"><h3>🚢 운송 중 · 선적 예정</h3>${incTable(inc,false)}</div>
-  <div class="panel"><h3>📥 수불부에서 이미 입고완료(상품) 처리됐지만 재고 Lot이 없는 건 <span class="help">(최근 45일)</span></h3>
-    <div class="help" style="margin-bottom:8px">수불부에서 먼저 “입고완료”를 누른 경우 여기서 Lot만 등록하면 됩니다. 엑셀에서 이관된 Lot과 중복이면 등록하지 마세요.</div>
+  <div class="panel"><h3>📥 수불부에서 이미 입고완료(상품) 처리됐지만 재고 Lot이 없는 건 <span class="help">(최근 90일 · 같은 Invoice Lot이 있으면 제외)</span></h3>
+    <div class="help" style="margin-bottom:8px">수불부에서 먼저 “입고완료”를 누른 경우 여기서 Lot만 등록하면 됩니다. 등록 전까지는 대시보드 창고 재고에 “Lot 미등록”으로 포함됩니다.</div>
     ${recentGoods.length?`<div class="tbl-scroll"><table><thead><tr><th>품목</th><th>INVOICE</th><th class="num">수량(kg)</th><th>창고입고일</th><th></th></tr></thead><tbody>${recentGoods.map(r=>`<tr><td>${esc(pname(ledgerProd(r)))}</td><td class="mono">${esc(r.invoice)}</td><td class="num">${fmt(r.qty)}</td><td>${dstr(r.plantEta)}</td><td><button class="btn ghost sm" onclick="app.receiveModal('${r.id}')">Lot 등록</button></td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">없음</div>'}
   </div>`;
 }
