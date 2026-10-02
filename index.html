@@ -575,6 +575,30 @@ function sysIbc(k){ const p=P(k), rm=remMap(); let ea=0, kg=0, neg=0;
 const ibcProducts=()=>products().filter(p=>state.lots.some(l=>l.product===p.key));
 function lastCount(k){ const c=state.snaps.filter(x=>x.count&&x.count.items&&x.count.items[k]).sort((a,b)=>String(b.id).localeCompare(String(a.id)))[0]; return c?{date:c.id,...c.count,it:c.count.items[k]}:null; }
 function movesSince(k,ts){ return state.history.filter(h=>h.product===k&&(!ts||h.tsMs>ts)&&!IBC_MOVE_SKIP.has(h.action)); }
+const DEL_ACTIONS=new Set(['사용기록 삭제','Lot 삭제','ISO 삭제','이관 데이터 삭제']);
+const histKg=h=>{ const m=String(h.summary||'').match(/([\d,]+(?:\.\d+)?)\s*kg/); return m?+m[1].replace(/,/g,''):0; };
+const tsOf=v=>v?Date.parse(v)||0:0;
+/* ① 마지막 실사 이후 시스템 IBC 변화 분해 (입고 / 사용 / 삭제 / 설명 안 됨) */
+function ibcDrift(k){
+  const lc=lastCount(k); if(!lc||!lc.tsMs) return null; const p=P(k), u=p.ibcKg||1, ts=lc.tsMs; const now=sysIbc(k).ea;
+  const isIbc=l=>(l.container||'IBC')==='IBC';
+  const addLots=state.lots.filter(l=>l.product===k&&isIbc(l)&&tsOf(l.createdAt)>ts).reduce((s,l)=>s+(+l.qtyIn||0)/(+l.unitKg||u),0);
+  const uses={}; state.usage.filter(x=>x.product===k&&tsOf(x.createdAt)>ts).forEach(x=>{ const l=state.lots.find(y=>y.id===x.lotId); if(l&&!isIbc(l)) return; uses[x.type]=(uses[x.type]||0)+(+x.qtyKg||0)/(l?(+l.unitKg||u):u); });
+  const dels=state.history.filter(h=>h.product===k&&h.tsMs>ts&&DEL_ACTIONS.has(h.action));
+  const delEA=dels.filter(h=>h.action==='사용기록 삭제'||h.action==='ISO 삭제').reduce((s,h)=>s+histKg(h)/u,0)-dels.filter(h=>h.action==='Lot 삭제').reduce((s,h)=>s+histKg(h)/u,0);
+  const useEA=Object.values(uses).reduce((s,v)=>s+v,0);
+  const delta=Math.round((now-lc.it.sys)*100)/100, explained=Math.round((addLots-useEA+delEA)*100)/100;
+  return {lc,now,delta,addLots,uses,dels,delEA,unexplained:Math.round((delta-explained)*100)/100};
+}
+/* ③ 수불부 차이 원인 후보: 같은 수량의 최근 삭제·등록 기록 */
+function diffCandidates(k,diff){
+  const a=Math.abs(diff); if(a<1) return []; const since=Date.now()-14*86400000, near=x=>Math.abs(x-a)<=Math.max(1,a*0.002), out=[];
+  state.history.filter(h=>h.product===k&&h.tsMs>since&&near(histKg(h))).forEach(h=>out.push(`${absTime(h.tsMs)} ${userShort(h)} · ${h.action} · ${h.summary||''}`));
+  const g={}; state.usage.filter(x=>x.product===k&&tsOf(x.createdAt)>since).forEach(x=>{ const key=x.createdAt+'|'+x.type+'|'+dstr(x.date); (g[key]=g[key]||{x,kg:0}).kg+=(+x.qtyKg||0); });
+  Object.values(g).filter(v=>near(v.kg)).forEach(v=>out.push(`${dstr(v.x.date)} ${v.x.type} ${fmt(v.kg)} kg · ${v.x.customer||''} ${v.x.jnfamLot||''} (등록 ${(v.x.createdAt||'').slice(0,10)})${v.x.outboundId?'':' · 수불부 미연결'}`));
+  const lk=ledgerKey(k); if(lk) state.outbound.filter(o=>o.item===lk.item&&Math.abs(+o.purity-lk.purity)<1e-4&&near(+o.qty)&&(dstr(o.date)>=dstr(new Date(since).toISOString()))).forEach(o=>out.push(`수불부 출고 ${dstr(o.date)} ${o.buyer||''} ${fmt(o.qty)} kg${o.src==='inventory'?'':' · 재고현황 미연결'}`));
+  return [...new Set(out)].slice(0,6);
+}
 function ibcCountPanel(full){
   const ps=ibcProducts(); const pc=state.physCount||(state.physCount={});
   const rows=ps.map(p=>{ const s=sysIbc(p.key), lc=lastCount(p.key); const ph=pc[p.key]; const has=ph!==''&&ph!=null; const d=has?Math.round((+ph-s.ea)*100)/100:null; return {p,s,lc,ph,has,d}; });
@@ -584,7 +608,7 @@ function ibcCountPanel(full){
   ${rows.map(r=>`<tr><td><b>${esc(r.p.name)}</b>${r.s.neg?` <span class="tag warn" title="잔량이 마이너스인 Lot">마이너스 Lot ${r.s.neg}</span>`:''}</td><td class="num"><b style="font-size:16px">${fmt1(r.s.ea)}</b> <span class="help">${fmt(r.s.kg)} kg</span></td>
     <td><input type="number" step="1" min="0" value="${r.has?esc(r.ph):''}" placeholder="개수 입력" onchange="app.setPhys('${r.p.key}',this.value)"></td>
     <td class="num">${!r.has?'-':r.d===0?'<span class="tag ok">일치</span>':`<span class="tag warn" style="font-size:13px">${r.d>0?'실물 +':'시스템 +'}${fmt1(Math.abs(r.d))} IBC</span>`}</td>
-    <td class="help">${r.lc?`${esc(r.lc.date)} · 실사 ${fmt1(r.lc.it.phys)} / 시스템 ${fmt1(r.lc.it.sys)} ${Math.abs(r.lc.it.phys-r.lc.it.sys)<0.01?'<span class="tag ok">일치</span>':'<span class="tag warn">불일치</span>'} · ${esc(String(r.lc.user||'').split('@')[0])}`:'기록 없음'}</td></tr>`).join('')}
+    <td class="help">${r.lc?`${esc(r.lc.date)} · 실사 ${fmt1(r.lc.it.phys)} / 시스템 ${fmt1(r.lc.it.sys)} ${Math.abs(r.lc.it.phys-r.lc.it.sys)<0.01?'<span class="tag ok">일치</span>':'<span class="tag warn">불일치</span>'} · ${esc(String(r.lc.user||'').split('@')[0])}${(()=>{ const d=ibcDrift(r.p.key); if(!d||Math.abs(d.delta)<0.01) return ' · 이후 변동 없음'; return `<br>이후 시스템 <b>${d.delta>0?'+':''}${fmt1(d.delta)} IBC</b> (입고 +${fmt1(d.addLots)}${Object.entries(d.uses).map(([t,v])=>` · ${esc(t)} −${fmt1(v)}`).join('')}${d.dels.length?` · <b style="color:var(--red)">삭제 ${d.delEA>=0?'+':''}${fmt1(d.delEA)}</b>`:''}${Math.abs(d.unexplained)>=0.01?` · <b style="color:var(--red)">설명 안 됨 ${d.unexplained>0?'+':''}${fmt1(d.unexplained)}</b>`:''})`; })()}`:'기록 없음'}</td></tr>`).join('')}
   </tbody></table></div>
   ${full?rows.filter(r=>(r.has&&r.d!==0)||(r.lc&&Math.abs(r.lc.it.phys-r.lc.it.sys)>0.01)).map(r=>{ const base=state.snaps.filter(x=>x.count&&x.count.items&&x.count.items[r.p.key]&&Math.abs(x.count.items[r.p.key].phys-x.count.items[r.p.key].sys)<0.01).sort((a,b)=>String(b.id).localeCompare(String(a.id)))[0];
       const mv=movesSince(r.p.key,base?base.count.tsMs:Date.now()-14*86400000).slice(0,40);
@@ -664,6 +688,15 @@ function checkAll(){
   // 입고
   state.ledger.filter(r=>r.invType==='미착품'&&ledgerProd(r)&&recvDone(r)).forEach(r=>issues.push({sev:'amber',cat:'수불부 전환 대기',prod:ledgerProd(r),text:`${pname(ledgerProd(r))} ${r.invoice||''} — 전량 입고됐지만 수불부가 아직 미착품`,act:`app.convertLedger('${r.id}')`,btn:'상품 전환'}));
   arrivedNoLot().forEach(r=>issues.push({sev:'amber',cat:'Lot 미등록',prod:ledgerProd(r),text:`${pname(ledgerProd(r))} ${r.invoice||''} ${fmt(r.qty)} kg — 수불부 입고완료, 재고 Lot 없음`,act:`app.receiveModal('${r.id}')`,btn:'Lot 등록'}));
+  // 실사 이후 삭제·소급 등록·수량 수정 (날짜 제한 없음, 기준 = 마지막 실사, 없으면 14일)
+  products().forEach(p=>{ const lc=lastCount(p.key); const ts=lc&&lc.tsMs?lc.tsMs:Date.now()-14*86400000; const base=lc?`마지막 실사(${lc.date}) 이후`:'최근 14일';
+    const d=lc?ibcDrift(p.key):null;
+    if(d&&(d.dels.length||Math.abs(d.unexplained)>=0.01)) issues.push({sev:'red',cat:'실사 이후 IBC 변화',prod:p.key,text:`${p.name} · 실사 ${fmt1(d.lc.it.sys)} → 현재 ${fmt1(d.now)} IBC (${d.delta>0?'+':''}${fmt1(d.delta)})${d.dels.length?` · 삭제 ${d.dels.length}건 포함`:''}${Math.abs(d.unexplained)>=0.01?` · 기록으로 설명 안 되는 ${d.unexplained>0?'+':''}${fmt1(d.unexplained)} IBC`:''} — 실물과 맞는지 확인`,act:`app.go('check')`,btn:'변동 보기'});
+    state.history.filter(h=>h.product===p.key&&h.tsMs>ts&&DEL_ACTIONS.has(h.action)).forEach(h=>issues.push({sev:'red',cat:'삭제 기록',prod:p.key,text:`${absTime(h.tsMs)} ${userShort(h)} · ${h.action} · ${h.summary||''} (${base}) — 실물과 맞는 삭제인지 확인`}));
+    state.history.filter(h=>h.product===p.key&&h.tsMs>ts&&h.action==='Lot 수정'&&(h.changes||[]).some(c=>c.f==='qtyIn'||c.f==='unitKg'||c.f==='product')).forEach(h=>issues.push({sev:'amber',cat:'Lot 수량 수정',prod:p.key,text:`${absTime(h.tsMs)} ${userShort(h)} · ${h.summary||''} · ${chgText(h,3)}`}));
+    state.usage.filter(x=>x.product===p.key&&tsOf(x.createdAt)>ts&&x.createdBy!=='excel-import'&&dstr(x.date)&&(tsOf(x.createdAt)-Date.parse(dstr(x.date)+'T23:59:59'))>3*86400000).forEach(x=>{ const l=state.lots.find(y=>y.id===x.lotId)||{}; issues.push({sev:'amber',cat:'과거 날짜 등록',prod:p.key,text:`${p.name} · ${dstr(x.date)} ${x.type} ${fmt(x.qtyKg)} kg · Lot ${l.sourceLot||'?'} · ${x.customer||''} — ${(x.createdAt||'').slice(0,10)}에 소급 등록 (${String(x.createdBy||'').split('@')[0]})`}); });
+  });
+  rows.forEach(r=>{ if(r.bad) r.cands=diffCandidates(r.key,r.diff); });
   issues.sort((a,b)=>(a.sev==='red'?0:1)-(b.sev==='red'?0:1));
   return {rows,issues};
 }
@@ -677,7 +710,7 @@ function vCheck(){
   <div class="tbl-scroll"><table><thead><tr><th>품목</th><th class="num">수불부 상품재고</th><th class="num">IBC</th><th class="num">ISO 대기</th><th class="num">Lot 미등록</th><th class="num">재고현황 합계</th><th class="num">차이</th></tr></thead><tbody>
   ${c.rows.map(r=>{
     return `<tr><td><b>${esc(r.name)}</b></td><td class="num">${fmt(r.ledgerGoods)}</td><td class="num">${fmt(r.ibcRaw)}</td><td class="num">${fmt(r.iso)}</td><td class="num">${r.arr?fmt(r.arr):'-'}</td><td class="num"><b>${fmt(r.inv)}</b></td>
-    <td class="num">${r.bad?`<span class="tag warn">${r.diff>0?'+':''}${fmt(r.diff)}</span>`:'<span class="tag ok">일치</span>'}</td></tr>`; }).join('')||'<tr><td colspan="7" class="empty">비교할 품목 없음</td></tr>'}
+    <td class="num">${r.bad?`<span class="tag warn">${r.diff>0?'+':''}${fmt(r.diff)}</span>`:'<span class="tag ok">일치</span>'}</td></tr>${r.bad?`<tr><td></td><td colspan="6" class="help" style="padding-top:0">🔎 같은 수량(${fmt(Math.abs(r.diff))} kg)의 최근 14일 기록: ${(r.cands||[]).length?'<br>'+r.cands.map(esc).join('<br>'):'없음 — 여러 건이 합쳐진 차이일 수 있습니다 (아래 변동 기록 참고)'}</td></tr>`:''}`; }).join('')||'<tr><td colspan="7" class="empty">비교할 품목 없음</td></tr>'}
   </tbody></table></div>
   <div class="help" style="margin-top:6px">차이 = 재고현황 − 수불부 (+면 재고현황이 많음). 수불부 합계가 맞아도 IBC↔ISO 배분이 틀리면 위 IBC 실사에서 차이가 납니다.</div></div>
   <div class="panel"><h3>③ 확인 필요 항목 <span class="help">${c.issues.length}건</span><span class="spacer"></span><button class="btn ghost sm" onclick="app.reloadCheck()">다시 점검</button></h3>
