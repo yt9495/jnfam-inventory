@@ -247,16 +247,17 @@ $('modalBg').addEventListener('mousedown',e=>{ if(e.target.id==='modalBg') close
 const dday=(d)=>{ if(!d) return ''; const n=diffDays(d,today()); if(n<0) return `<span class="d-late">D+${-n}</span>`; if(n===0) return `<span class="d-soon">D-Day</span>`; if(n<=7) return `<span class="d-soon">D-${n}</span>`; return `<span class="d-ok">D-${n}</span>`; };
 
 /* ---------------- 데이터 계층 ---------------- */
+const noUndef=o=>{ const r={}; for(const k in o) if(o[k]!==undefined) r[k]=o[k]; return r; };
 async function dbSet(col,obj){
   if(!obj.id) obj.id=uid(col.slice(4,6)||'x');
   obj.updatedBy=who(); obj.updatedAt=new Date().toISOString();
   if(!obj.createdBy){ obj.createdBy=who(); obj.createdAt=obj.updatedAt; }
-  if(fb) await fb.setDoc(fb.doc(fb.db,col,obj.id),obj);
+  if(fb) await fb.setDoc(fb.doc(fb.db,col,obj.id),noUndef(obj));
   else { const k=colKey(col); const i=state[k].findIndex(x=>x.id===obj.id); if(i>=0) state[k][i]=obj; else state[k].push(obj); render(); }
 }
 async function dbPatch(col,id,patch){
   patch.updatedBy=who(); patch.updatedAt=new Date().toISOString();
-  if(fb) await fb.setDoc(fb.doc(fb.db,col,id),patch,{merge:true});
+  if(fb) await fb.setDoc(fb.doc(fb.db,col,id),noUndef(patch),{merge:true});
   else { const k=colKey(col); const r=state[k].find(x=>x.id===id); if(r) Object.assign(r,patch); render(); }
 }
 async function dbDel(col,id){
@@ -268,8 +269,8 @@ async function dbBatch(ops){ // ops: [{t:'set'|'patch'|'del', col, id, data}]
   let b=fb.writeBatch(fb.db), n=0; const now=new Date().toISOString();
   for(const o of ops){
     const ref=fb.doc(fb.db,o.col,o.id||o.data.id);
-    if(o.t==='set'){ const d={...o.data,updatedBy:who(),updatedAt:now}; if(!d.createdBy){d.createdBy=who();d.createdAt=now;} b.set(ref,d); }
-    else if(o.t==='patch') b.set(ref,{...o.data,updatedBy:who(),updatedAt:now},{merge:true});
+    if(o.t==='set'){ const d={...o.data,updatedBy:who(),updatedAt:now}; if(!d.createdBy){d.createdBy=who();d.createdAt=now;} b.set(ref,noUndef(d)); }
+    else if(o.t==='patch') b.set(ref,noUndef({...o.data,updatedBy:who(),updatedAt:now}),{merge:true});
     else b.delete(ref);
     if(++n>=400){ await b.commit(); b=fb.writeBatch(fb.db); n=0; }
   }
@@ -908,11 +909,12 @@ async function saveLot(id){
   const rd=$('l_date').value; const qty=+$('l_qty').value;
   if(!qty||qty<=0){ toast('입고수량을 입력하세요'); return; }
   if(id && qty < lotUsedC(old)-0.01){ if(!confirm('입고수량이 이미 사용된 수량보다 작습니다. 계속할까요?')) return; }
-  const o={...old,id:id||undefined,product:$('l_product').value,receivedDate:rd,receivedDateEstimated:id?(old.receivedDateEstimated&&rd===old.receivedDate):false,sourceLot:$('l_lot').value.trim(),container:$('l_cont').value,
+  const o={...old,id:id||undefined,product:$('l_product').value,receivedDate:rd,receivedDateEstimated:id?!!(old.receivedDateEstimated&&rd===old.receivedDate):false,sourceLot:$('l_lot').value.trim(),container:$('l_cont').value,
     unitKg:+$('l_unit').value||0,qtyIn:qty,location:$('l_loc').value.trim()||'창고',invoice:$('l_inv').value.trim(),mfgDate:$('l_mfg').value,
     shelfLife:$('l_shelf').value||(rd?addDays(rd,364):''),coa:$('l_coa').checked,hold:$('l_hold').checked,jnfamLots:$('l_jl').value.trim(),note:$('l_note').value.trim()};
   if(!id){ delete o.id; }
-  await dbSet(COL.lots,o); closeModal(); toast('저장되었습니다');
+  try{ await dbSet(COL.lots,o); }catch(e){ console.error(e); toast('저장 실패: '+(e.code||e.message),5000); return; }
+  closeModal(); toast('저장되었습니다');
   if(id){ const ch=diffObj(old,o); if(ch.length) logHistory({action:'Lot 수정',kind:'upd',col:COL.lots,docId:id,product:o.product,summary:`${lotLabel(o)} · ${fmt(o.qtyIn)} kg`,changes:ch}); }
   else logHistory({action:'Lot 직접 입고',kind:'add',col:COL.lots,docId:o.id,product:o.product,summary:`${lotLabel(o)} · ${fmt(o.qtyIn)} kg · ${dstr(o.receivedDate)}${o.invoice?' · '+o.invoice:''}`});
 }
@@ -1302,7 +1304,7 @@ async function doReceive(ledgerId){
   if(dup&&!confirm(`Lot ${dup.lot}은 이미 등록되어 있습니다. 그래도 등록할까요?`)) return;
   const shelf=$('rv_shelf').value||addDays(d,364);
   const ops=rows.map(x=>({t:'set',col:COL.lots,data:{id:uid('lo'),product:k,receivedDate:d,sourceLot:x.lot.trim(),container:$('rv_cont').value,unitKg:x.unit,qtyIn:Math.round(x.ea*x.unit*100)/100,
-    location:$('rv_loc').value.trim()||'창고',mfgDate:$('rv_mfg').value,shelfLife:shelf,coa:$('rv_coa').checked,hold:false,note:$('rv_note').value.trim(),jnfamLots:'',invoice:(r.invoice||'').trim(),ledgerInboundId:r.id}}));
+    location:$('rv_loc').value.trim()||'창고',mfgDate:$('rv_mfg').value,shelfLife:shelf,coa:$('rv_coa').checked,hold:false,note:$('rv_note').value.trim(),jnfamLots:'',invoice:(r.invoice||'').trim(),ledgerInboundId:r.id,receivedDateEstimated:false}}));
   const tot=rows.reduce((s,x)=>s+x.ea*x.unit,0), before=recvKg(r), cum=before+tot, q=+r.qty||0, done=cum>=q*(1-RECV_TOL);
   if(cum>q*(1+RECV_TOL)&&!confirm(`누적 입고 ${fmt(cum)} kg이 수불부 수량 ${fmt(q)} kg보다 많습니다. 그래도 저장할까요?`)) return;
   try{
