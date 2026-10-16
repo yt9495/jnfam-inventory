@@ -676,10 +676,12 @@ function checkAll(){
   Object.values(byB).filter(a=>a.length>1).forEach(a=>issues.push({sev:'red',cat:'ISO 중복',prod:a[0].product,text:`${pname(a[0].product)} · 같은 Batch Sheet에서 ISO ${a.length}개 생성 (${a.map(i=>`${i.jnfamLot||''} ${i.status} ${fmt(i.qtyKg)}kg ${dstr(i.fillDate)}`).join(' / ')}) — 이중 차감 가능성`,act:`app.go('iso')`,btn:'ISO 탭'}));
   // Batch Sheet ↔ ISO
   (state.batchDocs||[]).forEach(b=>{ const m=b.mat||{}; const bn=m.batchId||b.id; const u=m.used; const isoId=(b.done&&b.done.invIsoId)||(u&&u.isoId);
-    if(!isoId) return; const i=state.isos.find(x=>x.id===isoId);
+    if(!isoId) return; let i=state.isos.find(x=>x.id===isoId), relinked=false;
+    // 저장된 ISO ID가 없으면(ISO 재생성 등) 이 Batch에 연결된 ISO(batchSheetId)로 대체 확인
+    if(!i){ const alt=state.isos.filter(x=>x.batchSheetId===b.id); if(alt.length===1){ i=alt[0]; relinked=true; } }
     if(!i){ if(u&&u.isoId) issues.push({sev:'amber',cat:'Batch↔ISO',prod:'',text:`Batch ${bn} — 사용 등록된 ISO가 재고 현황에 없음 (Batch Sheet에서 다시 사용 등록 필요)`}); return; }
     const want=+(u&&u.kg)||0; if(want&&Math.abs(want-(+i.qtyKg||0))>0.5) issues.push({sev:'red',cat:'Batch↔ISO',prod:i.product,text:`Batch ${bn} 사용량 ${fmt(want)} kg ≠ ISO ${i.jnfamLot||''} ${fmt(i.qtyKg)} kg — 재고 현황에서 충전 기록이 수정/삭제된 것으로 보임`,act:`app.isoModal('${i.id}')`,btn:'ISO 보기'});
-    const missU=(u&&u.usageIds||[]).filter(id=>!state.usage.some(x=>x.id===id)); if(missU.length) issues.push({sev:'red',cat:'Batch↔ISO',prod:i.product,text:`Batch ${bn} — 충전 기록 ${missU.length}건이 재고 현황에서 삭제됨 (IBC가 실제보다 많게 잡힘)`,act:`app.isoModal('${i.id}')`,btn:'ISO 보기'});
+    const missU=(relinked?(i.sourceUsageIds||[]):(u&&u.usageIds||[])).filter(id=>!state.usage.some(x=>x.id===id)); if(missU.length) issues.push({sev:'red',cat:'Batch↔ISO',prod:i.product,text:`Batch ${bn} — 충전 기록 ${missU.length}건이 재고 현황에서 삭제됨 (IBC가 실제보다 많게 잡힘)`,act:`app.isoModal('${i.id}')`,btn:'ISO 보기'});
   });
   // 출하 미반영 / 끊어진 연동
   if(!state.outErr){
