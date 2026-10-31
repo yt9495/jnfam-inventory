@@ -221,7 +221,7 @@ const FB_CFG = {
   appId: "1:656610691213:web:1d03f91bd8dd36b2283ac4"
 };
 const FB_URL='https://www.gstatic.com/firebasejs/10.12.2/';
-const COL={products:'inv_products',lots:'inv_lots',usage:'inv_usage',isos:'inv_isos',snaps:'inv_snapshots',ledger:'inbound',hist:'inv_history',ledgerHist:'history',out:'outbound',cfg:'config'};
+const COL={products:'inv_products',lots:'inv_lots',usage:'inv_usage',isos:'inv_isos',snaps:'inv_snapshots',ledger:'inbound',hist:'inv_history',ledgerHist:'history',out:'outbound',cfg:'config',summary:'inv_summary'};
 const DEMO = new URLSearchParams(location.search).has('demo') || location.protocol==='file:';
 
 const state={products:[],lots:[],usage:[],isos:[],snaps:[],ledger:[],outbound:[],outErr:null,ledgerMaster:null,
@@ -354,7 +354,7 @@ function startListeners(fsM,db){
   const done=k=>{ pending.delete(k); if(!pending.size){ state.loaded=true; setConn('ok','Firebase 연결됨<br><span style="opacity:.75">'+esc(who())+'</span>','<div style="margin-top:6px"><a href="#" onclick="app.logout();return false">로그아웃</a></div>'); afterLoad(); } };
   const onErr=(k)=>err=>{
     if(err.code==='permission-denied'){
-      if(k==='ledger'){ state.ledgerErr='수불부(inbound) 읽기 권한이 없습니다'; render(); return; }
+      if(k==='ledger'){ state.ledgerErr='수불부(inbound) 읽기 권한이 없습니다'; state.ledgerLoaded=true; render(); return; }
       stopListeners(); fb=null;
       setConn('err','접근 권한 없음');
       state.invErr=true;
@@ -364,7 +364,9 @@ function startListeners(fsM,db){
   [['products',COL.products],['lots',COL.lots],['usage',COL.usage],['isos',COL.isos],['snaps',COL.snaps]].forEach(([k,c])=>{
     unsubs.push(fsM.onSnapshot(fsM.collection(db,c),snap=>{ state[k]=snap.docs.map(d=>({id:d.id,...d.data()})); done(k); render(); },onErr(k)));
   });
-  unsubs.push(fsM.onSnapshot(fsM.collection(db,COL.ledger),snap=>{ state.ledger=snap.docs.map(d=>({id:d.id,...d.data()})); state.ledgerErr=null; render(); },onErr('ledger')));
+  unsubs.push(fsM.onSnapshot(fsM.collection(db,COL.ledger),snap=>{ state.ledger=snap.docs.map(d=>({id:d.id,...d.data()})); state.ledgerErr=null; state.ledgerLoaded=true; render(); },onErr('ledger')));
+  /* 재고 전망 앱용 요약 — 현재 저장된 값과 비교해 바뀐 경우에만 갱신 */
+  unsubs.push(fsM.onSnapshot(fsM.doc(db,COL.summary,'current'),d=>{ state.summaryRemote=d.exists()?d.data():null; state.summaryRead=true; scheduleSummary(); },err=>{ state.summaryRead=true; state.summaryErr=err.code; console.warn('inv_summary',err); }));
   /* 수불부 출고(outbound) + 판매처 마스터 — 출하 연동용. 실패해도 재고 데이터에는 영향 없음 */
   unsubs.push(fsM.onSnapshot(fsM.collection(db,COL.out),snap=>{ state.outbound=snap.docs.map(d=>({id:d.id,...d.data()})); state.outErr=null; render(); },
     err=>{ state.outErr=err.code==='permission-denied'?'수불부 출고(outbound) 읽기 권한이 없습니다':'수불부 출고 불러오기 오류: '+err.code; console.warn('outbound',err); render(); }));
@@ -535,6 +537,45 @@ function stockOf(k){
   const daily=out30/30; const cover=daily>0?onHand/daily:null;
   return {ibc,hold,ea,cnt,iso,isoCnt:isoT.length,transit,trCnt:tr.length,planned,plCnt:pl.length,arrived,arrCnt:arrR.length,onHand,total:onHand+transit,out30,cover};
 }
+/* ---------- 재고 전망 앱 연동: 요약 발행 (inv_summary/current) ----------
+   재고 전망 프로그램(본인용)이 이 문서 1개만 읽어 현재고·입고 예정을 자동 반영합니다.
+   계산은 이 앱의 stockOf()·remainKg()를 그대로 사용 → 두 앱 숫자가 항상 같음.
+   데이터가 바뀔 때마다(누가 변경하든 그 화면에서) 1.5초 뒤 갱신, 값이 같으면 쓰지 않음. */
+let _sumT=null, _sumBusy=false, _sumStop=false;
+function buildSummary(){
+  const items={};
+  products().forEach(p=>{
+    const s=stockOf(p.key);
+    const inbound=state.ledgerErr?[]:ledgerPending().filter(r=>ledgerProd(r)===p.key).map(r=>{
+      const mi=r.invType==='미착품', rem=mi?remainKg(r):(+r.qty||0);
+      return {ledgerId:r.id,type:mi?'미착품':'선적예정',invoice:r.invoice||'',supplier:r.supplier||'',
+        qty:Math.round((+r.qty||0)*100)/100,remainKg:Math.round(rem*100)/100,partial:mi&&recvKg(r)>0,
+        etd:dstr(r.etd),eta:dstr(r.eta),plantEta:dstr(r.plantEta),note:r.note||''};
+    }).filter(x=>x.remainKg>0.5).sort((a,b)=>(a.plantEta||a.eta||a.etd||'9').localeCompare(b.plantEta||b.eta||b.etd||'9')||a.ledgerId.localeCompare(b.ledgerId));
+    const r2=v=>Math.round((+v||0)*100)/100;
+    items[p.key]={name:p.name,ledgerItem:p.ledgerItem||'',ledgerPurity:+p.ledgerPurity||0,
+      ibc:r2(s.ibc),iso:r2(s.iso),arrived:r2(s.arrived),onHand:r2(s.onHand),transit:r2(s.transit),planned:r2(s.planned),inbound};
+  });
+  return items;
+}
+function scheduleSummary(){
+  if(!fb||DEMO||_sumStop||!currentUser||!state.loaded||!state.ledgerLoaded||!state.summaryRead||!state.products.length) return;
+  clearTimeout(_sumT); _sumT=setTimeout(publishSummary,1500);
+}
+async function publishSummary(){
+  if(_sumBusy||!fb) return;
+  const items=buildSummary();
+  const cur=state.summaryRemote;
+  if(cur&&JSON.stringify(cur.items)===JSON.stringify(items)&&cur.ledgerOk===!state.ledgerErr) return;
+  _sumBusy=true;
+  try{
+    await fb.setDoc(fb.doc(fb.db,COL.summary,'current'),{items,ledgerOk:!state.ledgerErr,updatedAt:new Date().toISOString(),updatedBy:who(),app:'jnfam-inventory'});
+  }catch(e){
+    console.warn('inv_summary write',e);
+    if(e.code==='permission-denied'){ _sumStop=true; state.summaryErr='permission-denied'; }
+  }finally{ _sumBusy=false; }
+}
+
 function nextJnfamLot(k,date){
   const pre=P(k).lotPrefix||'JA'; const ymd=(date||today()).slice(2).replace(/-/g,'');
   const used=new Set(state.usage.filter(u=>u.product===k).map(u=>u.jnfamLot).concat(state.isos.map(i=>i.jnfamLot)).filter(Boolean));
@@ -545,6 +586,7 @@ function nextJnfamLot(k,date){
 /* ---------------- 렌더 ---------------- */
 function render(){
   _remCache=null;
+  scheduleSummary();
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.toggle('active',n.dataset.view===state.view));
   const nArr=state.ledger.length?arrivedNoLot().length:0; const nInc=ledgerPending().filter(r=>ledgerProd(r)).length;
   const b=$('incBadge'); b.style.display=(nInc||nArr)?'inline':'none'; b.textContent=nArr?`${nInc} · 미등록 ${nArr}`:nInc; b.style.background=nArr?'var(--red)':''; b.title=nArr?'수불부 입고완료 · Lot 미등록 건 있음':'';
@@ -1402,7 +1444,7 @@ function vSettings(){
     <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" onclick="app.importSeed()">엑셀 데이터 가져오기</button>
     ${state.lots.some(l=>l.createdBy==='excel-import')?`<button class="btn danger" onclick="app.removeSeed()">이관 데이터 삭제</button>`:''}</div></div>
   <div class="panel"><h3>⬇ 내보내기</h3><div class="help">전체 Lot·사용 기록·ISO를 엑셀 파일로 저장합니다 (백업·보고용).</div><div style="margin-top:12px"><button class="btn ghost" onclick="app.exportExcel()">엑셀로 내보내기</button></div>
-    <h3 style="margin-top:18px">연결 정보</h3><div class="help">Firebase 프로젝트: <code>${FB_CFG.projectId}</code> (수불부와 공유)<br>컬렉션: <code>inv_products</code> <code>inv_lots</code> <code>inv_usage</code> <code>inv_isos</code> <code>inv_snapshots</code> <code>inv_history</code> · 수불부 <code>inbound</code> <code>outbound</code> <code>config</code> <code>history</code><br><b>출하 연동</b>: 출하·ISO 출하 등록 시 수불부 <code>outbound</code>(Goods Issue)에 자동 등록, 삭제·수정 시 함께 반영<br><b>변경 이력 규칙</b>: <code>match /inv_history/{id} { allow read, create: if &lt;기존 조건&gt;; allow update, delete: if false; }</code><br>사용자: ${esc(who()||'-')}</div></div>
+    <h3 style="margin-top:18px">연결 정보</h3><div class="help">Firebase 프로젝트: <code>${FB_CFG.projectId}</code> (수불부와 공유)<br>컬렉션: <code>inv_products</code> <code>inv_lots</code> <code>inv_usage</code> <code>inv_isos</code> <code>inv_snapshots</code> <code>inv_history</code> · 수불부 <code>inbound</code> <code>outbound</code> <code>config</code> <code>history</code><br><b>출하 연동</b>: 출하·ISO 출하 등록 시 수불부 <code>outbound</code>(Goods Issue)에 자동 등록, 삭제·수정 시 함께 반영<br><b>재고 전망 연동</b>: 데이터 변경 시 <code>inv_summary/current</code>에 품목별 현재고·입고 예정 요약을 자동 갱신 (규칙: <code>match /inv_summary/{id} { allow read, write: if &lt;기존 조건&gt;; }</code>)${state.summaryErr?' <span class="tag warn">요약 쓰기 실패: '+esc(state.summaryErr)+' — 규칙 확인</span>':''}<br><b>변경 이력 규칙</b>: <code>match /inv_history/{id} { allow read, create: if &lt;기존 조건&gt;; allow update, delete: if false; }</code><br>사용자: ${esc(who()||'-')}</div></div>
   </div>`;
 }
 function prodModal(key){
